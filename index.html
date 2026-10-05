@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Personal Places Map</title>
+  <meta name="description" content="A private map of places you chose to remember. Everything stays on your device.">
+  <meta name="theme-color" content="#1B6B8F">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Places">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" crossorigin="anonymous">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-view="none">
+  <div id="map"></div>
+
+  <nav class="toolbar" aria-label="App">
+    <button type="button" id="places-button" class="chip">Places</button>
+    <button type="button" id="timeline-button" class="chip">Timeline</button>
+    <button type="button" id="settings-button" class="chip">Settings</button>
+  </nav>
+
+  <aside id="panel" class="panel" aria-label="Details">
+    <div id="panel-body"></div>
+  </aside>
+
+  <section id="empty" class="empty-card" hidden>
+    <p class="title strong"></p>
+    <p class="text"></p>
+  </section>
+
+  <button type="button" id="pin-button" class="fab">
+    <span class="plus" aria-hidden="true">＋</span><span class="label">Pin location</span>
+  </button>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <noscript><p class="noscript">Personal Places Map needs JavaScript to run.</p></noscript>
+
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin="anonymous"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
