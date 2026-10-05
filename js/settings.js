@@ -5,6 +5,7 @@ export const DEFAULT_SETTINGS = {
   tileUrl: '',
   tileAttribution: '© OpenStreetMap contributors',
   fallback: 'ask', // what to do when the tile server can't be reached: 'ask' | 'always' | 'never'
+  localOnline: true, // with offline map files: also use the online map for detail beyond them
 };
 
 export function loadSettings() {
@@ -14,6 +15,7 @@ export function loadSettings() {
       tileUrl: typeof stored.tileUrl === 'string' ? stored.tileUrl : DEFAULT_SETTINGS.tileUrl,
       tileAttribution: typeof stored.tileAttribution === 'string' ? stored.tileAttribution : DEFAULT_SETTINGS.tileAttribution,
       fallback: ['ask', 'always', 'never'].includes(stored.fallback) ? stored.fallback : DEFAULT_SETTINGS.fallback,
+      localOnline: typeof stored.localOnline === 'boolean' ? stored.localOnline : DEFAULT_SETTINGS.localOnline,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

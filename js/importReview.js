@@ -7,7 +7,7 @@ import { formatDate } from './dates.js';
 import { latestVisit } from './schema.js';
 
 const OPTIONS = [
-  ['merge', 'Combine both (keep every visit)'],
+  ['merge', 'Combine (newest edit wins)'],
   ['mine', 'Keep mine'],
   ['theirs', "Use the file's version"],
 ];

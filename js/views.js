@@ -169,10 +169,22 @@ export function renderForm({ title, subtitle, show, initial = {}, coords, onSave
 
 /* ---------- settings ---------- */
 
+const formatBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+
 export function renderSettings({
   count, lastExport, onExport, onImportFile, onClose,
   tiles, onSaveTiles, onClearTileCache,
+  maps, onAddMapFile, onRemoveMapFile, onToggleLocalOnline,
 }) {
+  const mapFileInput = h('input', {
+    type: 'file', hidden: true, // no `accept`: phones grey out unknown extensions like .pmtiles
+    onchange: (event) => {
+      const file = event.target.files[0];
+      event.target.value = '';
+      if (file) onAddMapFile(file);
+    },
+  });
+
   const fileInput = h('input', {
     type: 'file', accept: 'application/json,.json', hidden: true,
     onchange: (event) => {
@@ -233,6 +245,30 @@ export function renderSettings({
       h('button', { type: 'button', class: 'btn', onclick: onClearTileCache }, 'Clear cached map tiles'),
     ),
     h('p', { class: 'hint' }, 'Tiles you have looked at are kept on this device for about a week, so revisiting a place loads faster and can work briefly offline.'),
+
+    h('h3', {}, 'Offline map files'),
+    h('p', {}, 'Add .pmtiles files and the map is drawn from this device with no network. A small worldwide file plus files for regions you pin often works well.'),
+    maps.supported ? null : h('p', { class: 'hint' }, "The map-file reader didn't load. Connect once and reload to turn this on."),
+    maps.files.length
+      ? h('ul', { class: 'file-list' }, maps.files.map((f) =>
+          h('li', {},
+            h('div', {},
+              h('span', { class: 'strong file-name' }, f.name),
+              h('span', { class: 'hint' }, `${f.header.kind} · zoom ${f.header.minZoom}–${f.header.maxZoom} · ${formatBytes(f.size)}`),
+            ),
+            h('button', { type: 'button', class: 'btn ghost small danger-text', onclick: () => onRemoveMapFile(f.name) }, 'Remove'),
+          )))
+      : h('p', { class: 'hint' }, 'No map files added yet.'),
+    h('div', { class: 'actions stack' },
+      h('button', { type: 'button', class: 'btn', disabled: !maps.supported, onclick: () => mapFileInput.click() }, 'Add map file…'),
+    ),
+    mapFileInput,
+    maps.files.length
+      ? h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: maps.localOnline, onchange: (event) => onToggleLocalOnline(event.target.checked) }),
+          h('span', {}, 'Use the online map for detail beyond these files'))
+      : null,
+    h('p', { class: 'hint' }, 'Files are copied into this browser and never uploaded. Labels are not drawn on offline maps. Keep an eye on file sizes, especially on a phone.'),
 
     h('h3', {}, 'Privacy'),
     h('p', {}, 'Your places never leave this device. Your location is read only when you tap Pin location, and only saved if you save the place.'),

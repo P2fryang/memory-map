@@ -4,7 +4,15 @@ import { OSM_ATTRIBUTION, OSM_TILE_URL } from './config.js';
 
 export const osmSource = () => ({ kind: 'osm' });
 export const customSource = (url, attribution) => ({ kind: 'custom', url: url.trim(), attribution: attribution ?? '' });
-export const sourceLabel = (source) => (source.kind === 'osm' ? 'OpenStreetMap' : 'your tile server');
+/** Offline map files drawn first; `online` (an osm/custom source, or null) fills in beyond them. */
+export const localSource = (files, online) => ({ kind: 'local', files, online: online ?? null });
+
+export function sourceLabel(source) {
+  if (source.kind === 'osm') return 'OpenStreetMap';
+  if (source.kind === 'custom') return 'your tile server';
+  if (!source.online) return 'your offline map files only';
+  return `your offline map files, with ${sourceLabel(source.online)} beyond them`;
+}
 
 export const isStyleUrl = (url) => /\.json(\?.*)?$/i.test(url);
 
@@ -36,9 +44,69 @@ export const BLANK_STYLE = {
   layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#dfe7ea' } }],
 };
 
+/** Raster tile address + attribution for an online source, or null (a whole-style .json can't be layered). */
+function onlineRaster(source) {
+  if (!source) return null;
+  if (source.kind === 'osm') return { tiles: OSM_TILE_URL, attribution: OSM_ATTRIBUTION };
+  if (source.kind === 'custom' && !isStyleUrl(source.url)) return { tiles: source.url, attribution: source.attribution };
+  return null;
+}
+
+// Plain colours, no text labels: labels need font files, which would have to come from a server.
+const LAND = '#e9e6dc';
+const WATER = '#bcd7e6';
+const ROAD = '#cfc9ba';
+const BORDER = '#8e9aa3';
+
+function vectorLayers(prefix, source, minzoom) {
+  const layers = [
+    { id: `${prefix}earth`, type: 'fill', source, 'source-layer': 'earth', paint: { 'fill-color': LAND } },
+    { id: `${prefix}water`, type: 'fill', source, 'source-layer': 'water', paint: { 'fill-color': WATER } },
+    { id: `${prefix}boundaries`, type: 'line', source, 'source-layer': 'boundaries',
+      paint: { 'line-color': BORDER, 'line-opacity': 0.8, 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.4, 10, 1.2] } },
+    { id: `${prefix}roads`, type: 'line', source, 'source-layer': 'roads',
+      paint: { 'line-color': ROAD, 'line-width': ['interpolate', ['exponential', 1.5], ['zoom'], 6, 0.3, 18, 10] } },
+  ];
+  return minzoom === undefined ? layers : layers.map((l) => ({ ...l, minzoom }));
+}
+
+/**
+ * Style for offline map files (Protomaps-schema vector files, or raster files).
+ * Layer order, bottom to top:
+ *   1. background (sea colour)
+ *   2. the lowest-detail files (e.g. a worldwide z0-6 file), visible at every zoom (over-zoomed past their max)
+ *   3. the online map, only from the zoom just past those files; if it can't load, the files below show through
+ *   4. higher-detail files (regional extracts), from that same zoom, covering their own area
+ */
+export function localStyle(files, online) {
+  const sorted = [...files].sort((a, b) => a.maxZoom - b.maxZoom || a.name.localeCompare(b.name));
+  const lowMax = sorted[0].maxZoom;
+  const raster = onlineRaster(online);
+  const sources = {};
+  const layers = [{ id: 'background', type: 'background', paint: { 'background-color': WATER } }];
+
+  const addFile = (file, index, minzoom) => {
+    const id = `file${index}`;
+    sources[id] = { type: file.kind === 'vector' ? 'vector' : 'raster', url: `pmtiles://${file.key}`, attribution: OSM_ATTRIBUTION };
+    if (file.kind === 'raster') sources[id].tileSize = 256;
+    layers.push(...(file.kind === 'vector'
+      ? vectorLayers(`${id}-`, id, minzoom)
+      : [{ id: `${id}-raster`, type: 'raster', source: id, ...(minzoom === undefined ? {} : { minzoom }) }]));
+  };
+
+  sorted.forEach((file, i) => { if (file.maxZoom === lowMax) addFile(file, i); });
+  if (raster) {
+    sources.online = { type: 'raster', tiles: [raster.tiles], tileSize: 256, maxzoom: 19, attribution: raster.attribution };
+    layers.push({ id: 'online', type: 'raster', source: 'online', minzoom: lowMax + 1 });
+  }
+  sorted.forEach((file, i) => { if (file.maxZoom !== lowMax) addFile(file, i, lowMax + 1); });
+  return { version: 8, sources, layers };
+}
+
 /** A MapLibre `style` value (object or URL string) for a source. */
 export function styleFor(source) {
   if (source.kind === 'osm') return rasterStyle(OSM_TILE_URL, OSM_ATTRIBUTION);
+  if (source.kind === 'local') return localStyle(source.files, source.online);
   if (isStyleUrl(source.url)) return source.url;
   return rasterStyle(source.url, source.attribution);
 }
@@ -49,7 +117,7 @@ export function styleFor(source) {
  * reached, so "no tile here" isn't mistaken for "server down".
  */
 export async function probeSource(source, timeoutMs = 4000) {
-  if (source.kind === 'osm') return true;
+  if (source.kind === 'osm' || source.kind === 'local') return true;
   const url = isStyleUrl(source.url)
     ? source.url
     : source.url.split('{z}').join('0').split('{x}').join('0').split('{y}').join('0');

@@ -11,7 +11,10 @@ import { applyMerge, planMerge } from './merge.js';
 import { nearestPlace } from './geo.js';
 import { buildTimeline } from './timeline.js';
 import { ValidationError } from './validation.js';
-import { customSource, osmSource, probeSource, sourceLabel, validateTileUrl } from './tiles.js';
+import { customSource, localSource, osmSource, probeSource, sourceLabel, validateTileUrl } from './tiles.js';
+import { createMapFileStore } from './mapFiles.js';
+import { MapFileError } from './pmtilesHeader.js';
+import { localMapsSupported, registerLocalFiles } from './localMaps.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { renderList, renderDetail, renderForm, renderSettings, renderTimeline, EMPTY_TITLE, EMPTY_TEXT } from './views.js';
 import { choiceDialog, confirmDialog } from './dialog.js';
@@ -28,6 +31,7 @@ const pinButton = $('#pin-button');
 const emptyCard = $('#empty');
 
 const store = createStore(createPlaceRepository());
+const mapFiles = createMapFileStore();
 
 /**
  * view: 'none' | 'list' | 'detail' | 'form' | 'settings' | 'timeline'
@@ -38,6 +42,8 @@ const state = {
   form: null, formCtx: null, draft: null,
   timeline: null,
   tileSource: null, tileErrors: 0, checkingTiles: false,
+  online: null, // the online map in use (OpenStreetMap or your server), or null when offline files are used alone
+  mapMetas: [], localFiles: [], // offline map files: stored descriptions / registered with the map
 };
 
 const mapView = createMapView($('#map'), {
@@ -139,6 +145,10 @@ function renderPanel() {
         },
         onSaveTiles: saveTileSettings,
         onClearTileCache: clearTileCache,
+        maps: { supported: localMapsSupported(), files: state.mapMetas, localOnline: loadSettings().localOnline },
+        onAddMapFile: addMapFile,
+        onRemoveMapFile: removeMapFile,
+        onToggleLocalOnline: toggleLocalOnline,
       }));
       break;
     case 'timeline': {
@@ -483,7 +493,7 @@ async function addFromFile(incoming) {
   }
 }
 
-/* ---------- map tiles: your server first, OpenStreetMap as the fallback ---------- */
+/* ---------- map tiles: offline files, then your server, then OpenStreetMap ---------- */
 
 function useSource(source) {
   state.tileSource = source;
@@ -492,16 +502,25 @@ function useSource(source) {
   if (state.view === 'settings') renderPanel();
 }
 
+/** Shows an online map (OpenStreetMap or your server), underneath the offline files if there are any. */
+function showOnline(online) {
+  state.online = online;
+  const settings = loadSettings();
+  useSource(state.localFiles.length
+    ? localSource(state.localFiles, settings.localOnline ? online : null)
+    : online);
+}
+
 /** The user's server didn't answer. Depending on their setting: fall back, stay, or ask. */
 async function handleServerDown(custom) {
   const settings = loadSettings();
   if (settings.fallback === 'always') {
-    useSource(osmSource());
+    showOnline(osmSource());
     toast("Your map server isn't reachable. Using OpenStreetMap.");
     return;
   }
   if (settings.fallback === 'never') {
-    useSource(custom);
+    showOnline(custom);
     toast("Your map server isn't reachable.");
     return;
   }
@@ -516,21 +535,44 @@ async function handleServerDown(custom) {
   });
   if (choice === 'always') {
     saveSettings({ ...settings, fallback: 'always' });
-    useSource(osmSource());
+    showOnline(osmSource());
   } else if (choice === 'osm') {
-    useSource(osmSource());
+    showOnline(osmSource());
   } else {
-    useSource(custom);
+    showOnline(custom);
   }
 }
 
-async function initTiles() {
-  const settings = loadSettings();
+/** Reads the stored offline map files and registers them with the map. */
+async function loadLocalFiles() {
+  try { state.mapMetas = await mapFiles.list(); } catch { state.mapMetas = []; }
+  try { state.localFiles = await registerLocalFiles(mapFiles, state.mapMetas); } catch (err) {
+    console.warn('Could not open offline map files', err);
+    state.localFiles = [];
+  }
+}
+
+function configuredServer(settings) {
   const url = settings.tileUrl || SELF_HOSTED_TILES;
-  if (!url || validateTileUrl(url)) { useSource(osmSource()); return; }
-  const custom = customSource(url, settings.tileAttribution);
-  if (await probeSource(custom)) useSource(custom);
-  else await handleServerDown(custom);
+  return url && !validateTileUrl(url) ? customSource(url, settings.tileAttribution) : null;
+}
+
+/** Picks the map to show: offline files first (if any), then your server, then OpenStreetMap. */
+async function setupTiles() {
+  const settings = loadSettings();
+  const server = configuredServer(settings);
+  const hasLocal = state.localFiles.length > 0;
+
+  if (hasLocal) {
+    // Show the offline map straight away, then check the online part in the background.
+    showOnline(settings.localOnline ? (server ?? osmSource()) : null);
+    if (!settings.localOnline || !server) return;
+  } else if (!server) {
+    showOnline(osmSource());
+    return;
+  }
+  if (await probeSource(server)) { showOnline(server); return; }
+  await handleServerDown(server);
 }
 
 /** Many failed tiles on your server: is it down, or just missing tiles for this area? */
@@ -553,10 +595,10 @@ async function saveTileSettings({ url, attribution, fallback }) {
     toast("Couldn't save settings on this device.");
     return;
   }
-  if (!url) { useSource(osmSource()); toast('Using OpenStreetMap.'); return; }
+  if (!url) { showOnline(osmSource()); toast('Using OpenStreetMap.'); return; }
   const custom = customSource(url, attribution);
   if (await probeSource(custom)) {
-    useSource(custom);
+    showOnline(custom);
     toast('Connected. Using your tile server.');
   } else {
     toast("Saved, but your server didn't respond.");
@@ -571,6 +613,52 @@ async function clearTileCache() {
   } catch {
     toast("Couldn't clear cached tiles.");
   }
+}
+
+async function addMapFile(file) {
+  try {
+    const added = await mapFiles.add(file);
+    navigator.storage?.persist?.().catch(() => {});
+    toast(`Added ${added.name}.`);
+  } catch (err) {
+    if (!(err instanceof MapFileError)) console.error(err); // a wrong file type is expected, not a bug
+    await confirmDialog({
+      title: "Can't add this file",
+      message: err instanceof MapFileError ? err.message : "The file couldn't be saved on this device. It may be too large.",
+      confirmLabel: 'OK',
+      cancelLabel: null,
+    });
+    return;
+  }
+  await loadLocalFiles();
+  await setupTiles();
+  if (state.view === 'settings') renderPanel();
+}
+
+async function removeMapFile(name) {
+  const confirmed = await confirmDialog({
+    title: 'Remove this map file?',
+    message: `“${name}” will be removed from this device. You can add it again later.`,
+    confirmLabel: 'Remove',
+    cancelLabel: 'Keep',
+    danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    await mapFiles.remove(name);
+  } catch (err) {
+    console.error(err);
+    toast("Couldn't remove that file.");
+    return;
+  }
+  await loadLocalFiles();
+  await setupTiles();
+  if (state.view === 'settings') renderPanel();
+}
+
+async function toggleLocalOnline(checked) {
+  saveSettings({ ...loadSettings(), localOnline: checked });
+  await setupTiles();
 }
 
 /* ---------- wiring ---------- */
@@ -596,7 +684,7 @@ $('#empty .text').textContent = EMPTY_TEXT;
 
 async function start() {
   setView('none');
-  const tiles = initTiles(); // runs alongside loading saved places
+  const tiles = loadLocalFiles().then(setupTiles); // runs alongside loading saved places
   try {
     await store.load();
     mapView.fitToPlaces(store.places);

@@ -9,7 +9,9 @@ import { migratePlaceV1, isLegacyPlace, latestVisit } from '../js/schema.js';
 import { planMerge, applyMerge, mergePlaces, describeConflict } from '../js/merge.js';
 import { buildTimeline } from '../js/timeline.js';
 import { distanceMeters, nearestPlace } from '../js/geo.js';
-import { validateTileUrl, styleFor, osmSource, customSource } from '../js/tiles.js';
+import { validateTileUrl, styleFor, osmSource, customSource, localSource, localStyle, sourceLabel } from '../js/tiles.js';
+import { parseHeader, MapFileError } from '../js/pmtilesHeader.js';
+import { keyFor } from '../js/localMaps.js';
 
 let passed = 0;
 async function test(name, fn) {
@@ -277,6 +279,74 @@ await test('tile styles: OpenStreetMap vs custom raster vs style URL', () => {
   assert.equal(c.sources.basemap.tiles[0], 'https://t.example.com/{z}/{x}/{y}.png');
   assert.equal(c.sources.basemap.attribution, '© me');
   assert.equal(styleFor(customSource('https://t.example.com/style.json')), 'https://t.example.com/style.json');
+});
+
+/* ---------- offline map files ---------- */
+function pmHeader({ version = 3, tileType = 1, minZoom = 0, maxZoom = 6, bbox = [-180, -85, 180, 85], magic = 'PMTiles', size = 127 } = {}) {
+  const buf = new ArrayBuffer(127);
+  const view = new DataView(buf);
+  [...magic].forEach((c, i) => view.setUint8(i, c.charCodeAt(0)));
+  view.setUint8(7, version);
+  view.setUint8(98, 2); // gzip
+  view.setUint8(99, tileType);
+  view.setUint8(100, minZoom);
+  view.setUint8(101, maxZoom);
+  bbox.forEach((deg, i) => view.setInt32(102 + i * 4, Math.round(deg * 1e7), true));
+  return buf.slice(0, size);
+}
+
+await test('pmtiles header: vector and raster files are described', () => {
+  const v = parseHeader(pmHeader({ maxZoom: 12, bbox: [139.5, 35.5, 140.0, 35.9] }));
+  assert.deepEqual([v.kind, v.minZoom, v.maxZoom], ['vector', 0, 12]);
+  assert.ok(Math.abs(v.minLon - 139.5) < 1e-6 && Math.abs(v.maxLat - 35.9) < 1e-6);
+  assert.equal(parseHeader(pmHeader({ tileType: 2 })).kind, 'raster');
+  assert.equal(parseHeader(pmHeader({ tileType: 3 })).kind, 'raster');
+  assert.equal(parseHeader(pmHeader({ bbox: [-122.5, -33.9, -70.1, 5.5] })).minLon, -122.5); // negative coordinates
+});
+await test('pmtiles header: wrong files give readable errors', () => {
+  const bad = (buf, pattern) => assert.throws(() => parseHeader(buf), (e) => e instanceof MapFileError && pattern.test(e.message));
+  bad(pmHeader({ size: 50 }), /too small/);
+  bad(pmHeader({ magic: 'SQLite3' }), /isn't a PMTiles/);
+  bad(pmHeader({ version: 2 }), /version 2/);
+  bad(pmHeader({ tileType: 0 }), /what kind of tiles/);
+});
+
+const world = { key: 'local-world.pmtiles', name: 'world.pmtiles', kind: 'vector', minZoom: 0, maxZoom: 6 };
+const tokyo = { key: 'local-tokyo.pmtiles', name: 'tokyo.pmtiles', kind: 'vector', minZoom: 0, maxZoom: 12 };
+const ids = (style) => style.layers.map((l) => l.id);
+
+await test('offline style: world file below, online detail from the next zoom, regions on top', () => {
+  const style = localStyle([tokyo, world], osmSource());
+  assert.deepEqual(Object.keys(style.sources), ['file0', 'online', 'file1']);
+  assert.equal(style.sources.file0.url, 'pmtiles://local-world.pmtiles'); // lowest detail first, whatever the input order
+  assert.equal(style.sources.file1.url, 'pmtiles://local-tokyo.pmtiles');
+  const order = ids(style);
+  assert.ok(order.indexOf('file0-roads') < order.indexOf('online') && order.indexOf('online') < order.indexOf('file1-earth'));
+  const byId = Object.fromEntries(style.layers.map((l) => [l.id, l]));
+  assert.equal(byId.online.minzoom, 7); // no online tile requests while zoomed out
+  assert.equal(byId['file0-earth'].minzoom, undefined); // world shows at every zoom, so it's the offline fallback
+  assert.equal(byId['file1-earth'].minzoom, 7); // region only where it adds detail
+  assert.equal(style.layers[0].type, 'background');
+});
+await test('offline style: online part is optional and follows your server', () => {
+  assert.equal(localStyle([world], null).sources.online, undefined);
+  const mine = localStyle([world], customSource('https://t.example.com/{z}/{x}/{y}.png', '© me'));
+  assert.equal(mine.sources.online.tiles[0], 'https://t.example.com/{z}/{x}/{y}.png');
+  assert.equal(mine.sources.online.attribution, '© me');
+  assert.equal(localStyle([world], customSource('https://t.example.com/style.json')).sources.online, undefined); // a whole style can't be layered
+  assert.deepEqual(styleFor(localSource([world], null)).sources.file0.type, 'vector');
+});
+await test('offline style: raster files and every vector file get attribution; labels never required', () => {
+  const style = localStyle([{ ...world, kind: 'raster' }], null);
+  assert.equal(style.sources.file0.type, 'raster');
+  assert.ok(style.layers.some((l) => l.id === 'file0-raster' && l.type === 'raster'));
+  assert.ok(localStyle([world], null).sources.file0.attribution.includes('OpenStreetMap'));
+  assert.equal(localStyle([world, tokyo], null).layers.some((l) => l.type === 'symbol'), false); // no text, so no font files needed
+});
+await test('source labels and map-file keys', () => {
+  assert.equal(sourceLabel(localSource([world], null)), 'your offline map files only');
+  assert.match(sourceLabel(localSource([world], osmSource())), /offline map files, with OpenStreetMap/);
+  assert.equal(keyFor('My Map (v2).pmtiles'), 'local-My_Map__v2_.pmtiles');
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', with failures' : ''}`);

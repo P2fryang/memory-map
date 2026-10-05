@@ -33,7 +33,7 @@ old export into already-upgraded data recognises it as identical instead of dupl
 
 - **Add to my places**: new places are added; places already here are skipped; if the file only adds visits to a place
   you have, they are combined automatically. Anything that genuinely disagrees (different name or location, or the
-  same visit edited differently) is listed for you to decide: *Combine both*, *Keep mine*, or *Use the file's version*.
+  same visit edited differently) is listed for you to decide: *Combine (newest edit wins)*, *Keep mine*, or *Use the file's version*.
   Nothing is written until you confirm, and the whole import is saved in one step.
 - **Replace everything**: asks for confirmation first.
 
@@ -53,6 +53,35 @@ afterwards, and served as a stale copy if you're offline. The cache is capped at
 a "Clear cached map tiles" button. There is deliberately no prefetching or "download this area": OpenStreetMap's policy
 forbids bulk/offline downloading from tile.openstreetmap.org. https://operations.osmfoundation.org/policies/tiles/
 
+## Offline map files (PMTiles)
+
+Settings → **Offline map files → Add map file…**: pick one or more `.pmtiles` files (PMTiles version 3). They are copied into
+this browser's storage (IndexedDB, separate from your places) and never uploaded; the map then reads tiles straight from them,
+with no network and no server. Works on phones too. Ask the browser to keep the data with Settings' install/“persist” prompt
+(the app requests it) and keep your JSON backup: browsers, iPhones especially, can evict stored data under storage pressure.
+
+How the layers stack (bottom to top), so a small worldwide file plus a few regions does the job:
+
+1. **Lowest-detail file(s)**, e.g. a worldwide file up to zoom 6, shown at every zoom (blurry past its limit, but never blank).
+2. **The online map** (your server, else OpenStreetMap), only from the zoom just past those files. Below that zoom the app
+   makes no online tile requests. If it can't load (offline), the offline file underneath shows through.
+3. **Higher-detail files** (regional extracts), only from that same zoom, covering their own area.
+
+Untick “Use the online map for detail beyond these files” to stay fully offline. With no files added, nothing changes.
+
+Limits: vector files must use the **Protomaps basemap schema** (layers `earth`, `water`, `boundaries`, `roads`) and are drawn in
+plain colours **without text labels** (labels would need font files from a server). Raster PMTiles files are supported (assumed
+256 px tiles). Attribution shown is “© OpenStreetMap contributors”; change `OSM_ATTRIBUTION` use in `js/tiles.js` if your
+files come from other data.
+
+Making files (on your computer, with the PMTiles command-line tool; check its docs for current flags and where Protomaps
+publishes planet builds). The usual shape is one extract for the whole world at low zoom, plus one per region you pin often:
+
+    pmtiles extract <source-build> world.pmtiles  --maxzoom=6
+    pmtiles extract <source-build> region.pmtiles --bbox=<min_lon>,<min_lat>,<max_lon>,<max_lat> --maxzoom=12
+
+This uses the PMTiles library (`pmtiles@3.2.0` from jsDelivr, cached by the service worker after the first visit).
+
 ## Timeline
 
 Toolbar → **Timeline**: a slider over every visit date. Pins appear as you reach their first visit and the badge counts
@@ -71,7 +100,9 @@ stays still while it plays, so it loads few tiles.
       exportImport.js  versioned JSON export/import       merge.js       "Add" import planning + resolution
       timeline.js      timeline state by date             geo.js         distance / nearby lookup
       mapView.js       MapLibre adapter (only file that touches the map library)
-      tiles.js         tile sources, style building, reachability probe
+      tiles.js         tile sources, style building (online + offline layering), reachability probe
+      mapFiles.js      stores .pmtiles files on the device     pmtilesHeader.js  reads/validates a file's header
+      localMaps.js     connects stored files to MapLibre via the pmtiles library
       settings.js      per-device settings                config.js      constants
       geolocation.js, dates.js, dom.js, dialog.js, importReview.js, toast.js, rating.js
     tests/run.mjs      node tests (npm test)
