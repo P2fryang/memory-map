@@ -113,8 +113,13 @@ This uses the PMTiles library (`pmtiles@3.2.0` from jsDelivr, cached by the serv
 ## Timeline
 
 Toolbar → **Timeline**: a slider over every visit date. Pins appear as you reach their first visit and the badge counts
-revisits so far; **Play** replays it. It is intentionally low-detail (zoom limited to 1–8 in `TIMELINE_ZOOM`) and the camera
-stays still while it plays, so it loads few tiles.
+revisits so far; **Play** replays it. A line joins the pins in the order they were visited (date, then time, then place name,
+then the visit's created time, then its id; consecutive visits to the same place make no line). It follows the tag filter.
+
+By default it is intentionally low-detail (zoom limited to 1–8 in `TIMELINE_ZOOM`) and the camera stays still while it plays,
+so it loads few tiles. Tick **Zoom in on the pins shown** (for example with a `trip:` tag filter) to widen the zoom range to
+`TIMELINE_REGION` and have the camera fit the pins shown so far, down to roughly region level; it only moves when a new pin
+appears. This loads more map tiles, which is why it is opt-in.
 
 ## Layout
 

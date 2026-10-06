@@ -9,6 +9,8 @@
 //   flyTo(lat, lng, {zoom, minZoom})
 //   fitToPlaces(places, {maxZoom})
 //   enterOverview(places, {minZoom, maxZoom}) / leaveOverview()   low-detail whole-world view
+//   setZoomLimits({minZoom, maxZoom})   change the zoom range while in the overview
+//   setRoute([[lng, lat], ...])   the timeline's line through the pins, in order (empty clears it)
 //
 // Callbacks: onMapClick(lat, lng), onPlaceClick(id), onDraftMove(lat, lng),
 // onTileError(), getPadding() -> {top,right,bottom,left}.
@@ -41,6 +43,7 @@ function unavailableMap(container) {
   return {
     available: false, setTileSource: noop, setPlaces: noop, setVisibility: noop, setSelected: noop,
     setDraft: noop, clearDraft: noop, flyTo: noop, fitToPlaces: noop, enterOverview: noop, leaveOverview: noop,
+    setZoomLimits: noop, setRoute: noop,
   };
 }
 
@@ -70,6 +73,26 @@ export function createMapView(container, handlers) {
 
   map.on('click', (event) => handlers.onMapClick(event.lngLat.lat, event.lngLat.lng));
   map.on('error', (event) => { if (event && (event.tile || event.sourceId)) handlers.onTileError?.(); });
+
+  // The route is a map layer, and a layer vanishes whenever the style is replaced, so it is redrawn on style.load.
+  let route = [];
+  const paintRoute = () => {
+    const data = {
+      type: 'FeatureCollection',
+      features: route.length > 1 ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: route } }] : [],
+    };
+    try {
+      const source = map.getSource('route');
+      if (source) { source.setData(data); return; }
+      map.addSource('route', { type: 'geojson', data });
+      map.addLayer({
+        id: 'route', type: 'line', source: 'route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#134e68', 'line-width': 3, 'line-opacity': 0.8 },
+      });
+    } catch { /* style still loading; style.load paints it */ }
+  };
+  map.on('style.load', paintRoute);
 
   const markers = new Map(); // id -> { marker, el, total }
   let selectedId = null;
@@ -177,9 +200,18 @@ export function createMapView(container, handlers) {
     /** Low-detail whole-collection view for the timeline. The camera stays put while it plays. */
     enterOverview(places, { minZoom, maxZoom }) {
       savedCamera = { center: map.getCenter(), zoom: map.getZoom() };
+      this.setZoomLimits({ minZoom, maxZoom });
+      this.fitToPlaces(places, { maxZoom });
+    },
+
+    setZoomLimits({ minZoom, maxZoom }) {
       map.setMinZoom(minZoom);
       map.setMaxZoom(maxZoom);
-      this.fitToPlaces(places, { maxZoom });
+    },
+
+    setRoute(coordinates) {
+      route = coordinates;
+      paintRoute();
     },
 
     leaveOverview() {

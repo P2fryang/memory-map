@@ -357,10 +357,11 @@ export function renderSettings({
  *   getModel(filter)   -> timeline model for that filter (see timeline.js)
  *   filter             { tags, match }   remembered by the caller between openings
  *   onFilterChange(f)  called whenever the user changes the filter
- *   onChange(state)    called with { date, counts, onDate } whenever the slider moves
+ *   onChange(state)    called with { date, counts, onDate, route } whenever the slider moves
+ *   region / onRegionChange(on)   the "Zoom in on the pins shown" checkbox (the caller moves the camera)
  * Returns { el, ready, destroy, showPlace }. Call ready() once mounted to apply the first state.
  */
-export function renderTimeline({ getModel, stats, filter: initialFilter, onFilterChange, onChange, onClose }) {
+export function renderTimeline({ getModel, stats, filter: initialFilter, onFilterChange, region, onRegionChange, onChange, onClose }) {
   let filter = { tags: [...initialFilter.tags], match: initialFilter.match };
   let model = getModel(filter);
   let index = 0;
@@ -388,7 +389,7 @@ export function renderTimeline({ getModel, stats, filter: initialFilter, onFilte
         h('p', { class: 'strong' }, filter.tags.length ? 'No visits match these tags.' : EMPTY_TITLE),
         h('p', {}, filter.tags.length ? 'Try fewer tags, or switch to “Any of these”.' : 'Pin a place and it will appear here.')));
       playButton = null;
-      return { n, apply: () => onChange({ date: null, counts: new Map(), onDate: [] }) };
+      return { n, apply: () => onChange({ date: null, counts: new Map(), onDate: [], route: [] }) };
     }
 
     const dateLabel = h('p', { class: 'timeline-date' });
@@ -438,7 +439,11 @@ export function renderTimeline({ getModel, stats, filter: initialFilter, onFilte
   }
 
   return {
-    el: h('section', { class: 'view timeline' }, head, tagFilter, body),
+    el: h('section', { class: 'view timeline' }, head, tagFilter, body,
+      h('label', { class: 'check' },
+        h('input', { type: 'checkbox', checked: region, onchange: (event) => onRegionChange(event.target.checked) }),
+        h('span', {}, 'Zoom in on the pins shown')),
+      h('p', { class: 'hint' }, 'Follows the slider and fits the pins shown so far, down to region level. Loads more map tiles than the default view.')),
     ready() { current.apply(); },
     destroy: stop,
     showPlace(id) {

@@ -425,6 +425,22 @@ await test('tags: filtering by several tags, all or any', () => {
   assert.deepEqual(any.map((p) => [p.id, p.visits.length]), [['a', 2], ['b', 2]]);
   assert.equal(filterPlaces([A], { tags: [], match: 'all' })[0], A); // no filter: untouched
 });
+await test('timeline route: visits in order (date, time, place name, created, id); stays at one place collapse', () => {
+  const at = (lng) => ({ longitude: lng, latitude: 0 });
+  const C = place('c', 'Charlie', [visit('c1', '2026-01-01', { time: '09:00' })], at(3));
+  const Al = place('a', 'Alpha', [visit('a1', '2026-01-01', { time: '10:00' }), visit('a2', '2026-01-03', { time: '10:00' }), visit('a3', '2026-01-03', { time: '11:00' })], at(1));
+  const Br = place('b', 'Bravo', [visit('b1', '2026-01-01', { time: '10:00' })], at(2));
+  const t = buildTimeline([Br, Al, C]);
+  assert.deepEqual(t.stateAt(0).route, [[3, 0], [1, 0], [2, 0]]); // same time: Alpha before Bravo by name
+  assert.deepEqual(t.stateAt(1).route, [[3, 0], [1, 0], [2, 0], [1, 0]]); // a2, a3 are one stay
+  const early = { ...place('e', 'Same', [visit('e1', '2026-02-01', { time: '08:00' })], at(5)), };
+  const late = place('l', 'Same', [visit('l1', '2026-02-01', { time: '08:00', createdAt: '2026-10-05T00:00:00.000Z' })], at(6));
+  assert.deepEqual(buildTimeline([late, early]).stateAt(0).route, [[5, 0], [6, 0]]); // same name: earlier created first
+  const x = place('x', 'Same', [visit('v-b', '2026-02-01', { time: '08:00' })], at(7));
+  const y = place('y', 'Same', [visit('v-a', '2026-02-01', { time: '08:00' })], at(8));
+  assert.deepEqual(buildTimeline([x, y]).stateAt(0).route, [[8, 0], [7, 0]]); // same created: visit id
+  assert.deepEqual(buildTimeline([A, B, C], { tags: ['ramen'], match: 'all' }).stateAt(1).route.length, 3); // follows the filter: A, B, back to A (c1 and a3 are filtered out)
+});
 await test('timeline with a tag filter counts only matching visits and dates', () => {
   const t = buildTimeline([A, B, C], { tags: ['ramen'], match: 'all' });
   assert.deepEqual(t.dates, ['2026-01-01', '2026-02-01']); // a3 / b2 / c1 don't match, so their dates are skipped

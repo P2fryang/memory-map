@@ -1,6 +1,6 @@
 // Controller: wires the store, the map and the panel views together.
 import { $ } from './dom.js';
-import { NEARBY_METERS, SELF_HOSTED_TILES, SIDEBAR_WIDTH, TIMELINE_ZOOM } from './config.js';
+import { NEARBY_METERS, SELF_HOSTED_TILES, SIDEBAR_WIDTH, TIMELINE_REGION, TIMELINE_ZOOM } from './config.js';
 import { formatDate, todayLocal } from './dates.js';
 import { createPlaceRepository } from './repository.js';
 import { createStore } from './store.js';
@@ -41,7 +41,7 @@ const mapFiles = createMapFileStore();
 const state = {
   view: 'none', selectedId: null,
   form: null, formCtx: null, draft: null,
-  timeline: null, tagFilter: { tags: [], match: 'all' },
+  timeline: null, region: false, timelineState: null, fitKey: null, tagFilter: { tags: [], match: 'all' },
   tileSource: null, styleKey: null, tileErrors: 0, checkingTiles: false,
   online: null, // the online map in use (OpenStreetMap or your server), or null when offline files are used alone
   mapMetas: [], localFiles: [], // offline map files: stored descriptions / registered with the map
@@ -162,7 +162,9 @@ function renderPanel() {
         stats,
         filter: state.tagFilter,
         onFilterChange: setTagFilter,
-        onChange: (s) => mapView.setVisibility(s.counts),
+        region: state.region,
+        onRegionChange: setTimelineRegion,
+        onChange: onTimelineChange,
         onClose: () => setView('none'),
       });
       panelBody.replaceChildren(state.timeline.el);
@@ -202,12 +204,41 @@ function updateEmpty() {
 function enterTimeline() {
   mapView.setSelected(null);
   mapView.enterOverview(store.places, TIMELINE_ZOOM);
+  if (state.region) mapView.setZoomLimits(TIMELINE_REGION);
+  state.fitKey = null;
   state.timeline?.ready();
+}
+
+function onTimelineChange(s) {
+  state.timelineState = s;
+  mapView.setVisibility(s.counts);
+  mapView.setRoute(s.route);
+  if (state.region) fitTimelineRegion();
+}
+
+/** Fits the camera to the pins shown so far; only moves when that set of pins changes (not on every revisit). */
+function fitTimelineRegion(force = false) {
+  const s = state.timelineState;
+  if (!s) return;
+  const key = [...s.counts.keys()].sort().join('|');
+  if (!force && key === state.fitKey) return;
+  state.fitKey = key;
+  const shown = store.places.filter((p) => s.counts.has(p.id));
+  mapView.fitToPlaces(shown.length ? shown : store.places, { maxZoom: TIMELINE_REGION.fitMaxZoom });
+}
+
+function setTimelineRegion(on) {
+  state.region = on;
+  mapView.setZoomLimits(on ? TIMELINE_REGION : TIMELINE_ZOOM);
+  if (on) fitTimelineRegion(true);
+  else mapView.fitToPlaces(store.places, { maxZoom: TIMELINE_ZOOM.maxZoom });
 }
 
 function leaveTimeline() {
   state.timeline?.destroy();
   state.timeline = null;
+  state.timelineState = null;
+  mapView.setRoute([]);
   applyMapFilter();
   mapView.leaveOverview();
 }
