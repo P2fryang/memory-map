@@ -19,15 +19,21 @@ Geolocation works on `localhost` and on HTTPS sites only.
 
 All paths are relative, so it works under the `/<repo>/` sub-path. **Shipping an update:** change `VERSION` in `sw.js`.
 
-## How the data works (schema v3)
+## How the data works (schema v4)
 
-A **place** is a location (name + coordinates) with one or more **visits** (date, rating, notes, photo URLs).
+A **place** is a location (name + coordinates) with one or more **visits** (date, optional time, rating, notes, tags, photo URLs).
 Revisiting adds a visit to the same place, so it stays a single selectable pin (a badge shows the visit count).
 Pinning within ~75 m of a saved place offers "Add a visit" instead of creating a duplicate.
 
 Version-1 data (the first MVP) is upgraded automatically: local data on load, and v1 export files on import.
 Each old pin becomes a place with one visit; the visit id is derived from the place id, so re-importing an
 old export into already-upgraded data recognises it as identical instead of duplicating it.
+
+## Visit time
+
+Each visit has a date and a time of day (`HH:MM`, device-local like the date, no time zone). New visits start at the
+current time; **Reset** (or an emptied field) sets 00:01. Visits that have no time, from imported older files or data already on
+the device, get 00:01. Same-day visits sort by time. Export files are **version 4** (v1-v3 files still import).
 
 ## Tags
 
@@ -46,13 +52,16 @@ including in an active filter.
 **Timeline filter:** pick as many tags as you like, then choose *All of these* (visits having every tag) or *Any of these*.
 Only matching visits count: slider dates, the "N of M places" line and the pin badges all follow the filter.
 
-Export files are now **version 3** (older apps will refuse them rather than silently dropping tags); v1 and v2 files still import.
+**Filter on the map and the Places list:** the same filter (tags + All/Any) is available in the Places list and the timeline, and it is
+shared: pins on the map show only places with a matching visit, and badges count matching visits. The Places button reads
+"Places · filtered" while a filter is active. The filter is not saved between sessions.
 
 ## Import: Add or Replace
 
 - **Add to my places**: new places are added; places already here are skipped; if the file only adds visits to a place
   you have, they are combined automatically. Anything that genuinely disagrees (different name or location, or the
-  same visit edited differently) is listed for you to decide: *Combine (newest edit wins)*, *Keep mine*, or *Use the file's version*.
+  same visit edited differently) is listed with the differing values side by side. Choose for the place: *Combine (newest edit wins)*,
+  *Keep mine*, or *Use the file's version*; then, for each visit that differs, optionally override it with *Keep mine* or *Use the file's version*.
   Nothing is written until you confirm, and the whole import is saved in one step.
 - **Replace everything**: asks for confirmation first.
 

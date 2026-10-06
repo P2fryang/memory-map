@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { validatePlaceBase, validateVisitFields } from '../js/validation.js';
 import { buildExport, parseImport, ImportError } from '../js/exportImport.js';
 import { createStore } from '../js/store.js';
-import { isValidDateString } from '../js/dates.js';
-import { migratePlaceV1, isLegacyPlace, latestVisit } from '../js/schema.js';
-import { planMerge, applyMerge, mergePlaces, describeConflict } from '../js/merge.js';
+import { DEFAULT_TIME, isValidDateString, isValidTimeString } from '../js/dates.js';
+import { migratePlaceV1, isLegacyPlace, latestVisit, sortVisits } from '../js/schema.js';
+import { planMerge, applyMerge, mergePlaces, clashingVisits } from '../js/merge.js';
 import { buildTimeline } from '../js/timeline.js';
 import { distanceMeters, nearestPlace } from '../js/geo.js';
 import { validateTileUrl, styleFor, osmSource, customSource, localSource, localStyle, sourceLabel } from '../js/tiles.js';
@@ -148,14 +148,14 @@ await test('export (v2) -> import round-trips', async () => {
   await store.addVisit(p.id, { date: '2026-11-01', rating: 2 });
   await newPlace(store, { name: 'Other' });
   const exported = JSON.parse(JSON.stringify(buildExport(store.places)));
-  assert.equal(exported.version, 3);
+  assert.equal(exported.version, 4);
   const { places } = parseImport(JSON.stringify(exported));
   assert.deepEqual(places.map((x) => x.id), store.places.map((x) => x.id));
   assert.equal(places[0].visits.length, 2);
 });
 await test('import accepts an OLD version-1 export from the first MVP and upgrades it', () => {
   const { version, places } = parseImport(JSON.stringify({ version: 1, places: [v1] }));
-  assert.equal(version, 3);
+  assert.equal(version, 4);
   assert.equal(places[0].visits[0].id, 'abc123:v1');
   assert.equal(places[0].visits[0].rating, 5);
 });
@@ -201,13 +201,14 @@ await test('merge: both sides added different visits -> union', () => {
   const [r] = applyMerge([a], planMerge([a], [b]));
   assert.deepEqual(r.visits.map((v) => v.id).sort(), ['onA', 'onB', 'v1']);
 });
-await test('merge: a differing name or edited visit is a conflict, with a readable reason', () => {
+await test('merge: a differing name or edited visit is a conflict, and the differing visits can be listed', () => {
   const renamed = { ...mine(), name: 'Ramen House' };
   const edited = place('p1', 'Ramen Shop', [visit('v1', '2026-01-10', { rating: 1 })]);
   const plan = planMerge([mine()], [renamed]);
   assert.equal(plan.conflicts.length, 1);
-  assert.match(describeConflict(plan.conflicts[0]).join(' '), /Ramen Shop.*Ramen House/);
-  assert.match(describeConflict(planMerge([mine()], [edited]).conflicts[0]).join(' '), /1 visit edited differently/);
+  assert.deepEqual(clashingVisits(mine(), renamed), []); // only the name differs
+  assert.deepEqual(clashingVisits(mine(), edited).map((c) => [c.mine.rating, c.theirs.rating]), [[4, 1]]);
+  assert.equal(planMerge([mine()], [edited]).conflicts.length, 1);
 });
 await test('merge: each conflict resolves by the user choice (mine / theirs / merge)', () => {
   const older = { ...mine(), updatedAt: '2026-01-01T00:00:00.000Z' };
@@ -222,8 +223,25 @@ await test('merge: each conflict resolves by the user choice (mine / theirs / me
   assert.equal(merged.visits.length, 2); // and no visit is lost
   assert.equal(applyMerge([older], plan)[0].visits.length, 2); // default is merge
 });
+await test('merge: per-visit overrides apply on top of the place-level choice', () => {
+  const t1 = '2026-01-01T00:00:00.000Z';
+  const t2 = '2026-09-01T00:00:00.000Z';
+  const a = place('p1', 'Ramen Shop', [visit('v1', '2026-01-10', { rating: 4, updatedAt: t1 }), visit('v2', '2026-02-10', { rating: 3, updatedAt: t1 })], { updatedAt: t1 });
+  const b = place('p1', 'Ramen House', [visit('v1', '2026-01-10', { rating: 1, updatedAt: t2 }), visit('v2', '2026-02-10', { rating: 5, updatedAt: t2 }), visit('v3', '2026-03-01')], { updatedAt: t2 });
+  const plan = planMerge([a], [b]);
+  assert.deepEqual(clashingVisits(a, b).map((c) => c.mine.id), ['v1', 'v2']);
+  const rating = (p, id) => p.visits.find((v) => v.id === id)?.rating;
+
+  const merged = applyMerge([a], plan, [{ base: 'merge', visits: { v1: 'mine' } }])[0];
+  assert.deepEqual([merged.name, merged.visits.length, rating(merged, 'v1'), rating(merged, 'v2')], ['Ramen House', 3, 4, 5]);
+  const keepMine = applyMerge([a], plan, [{ base: 'mine', visits: { v2: 'theirs' } }])[0];
+  assert.deepEqual([keepMine.name, keepMine.visits.length, rating(keepMine, 'v1'), rating(keepMine, 'v2')], ['Ramen Shop', 2, 4, 5]);
+  const useFile = applyMerge([a], plan, [{ base: 'theirs', visits: { v1: 'mine' } }])[0];
+  assert.deepEqual([useFile.name, useFile.visits.length, rating(useFile, 'v1'), rating(useFile, 'v2')], ['Ramen House', 3, 4, 5]);
+  assert.equal(applyMerge([a], plan, [{ base: 'mine', visits: {} }])[0].visits.length, 2); // no overrides: base only
+});
 await test('merge: re-importing an old v1 export into already-migrated data adds nothing', () => {
-  const local = [migratePlaceV1(v1)];
+  const local = [migratePlaceV1(v1)].map((p) => ({ ...p, visits: p.visits.map((v) => ({ ...v, time: DEFAULT_TIME })) })); // as store.load leaves it
   const { places } = parseImport(JSON.stringify({ version: 1, places: [v1] }));
   const plan = planMerge(local, places);
   assert.equal(plan.added.length + plan.merged.length + plan.conflicts.length, 0);
@@ -423,16 +441,16 @@ await test('tags: stored via the store, cleared on edit, and part of export/impo
   assert.equal('tags' in edited.visits[0], false);
   const again = await store.updateVisit(p.id, p.visits[0].id, { date: '2026-10-04', tags: ['sushi'] });
   const { places, version } = parseImport(JSON.stringify(JSON.parse(JSON.stringify(buildExport([again])))));
-  assert.equal(version, 3);
+  assert.equal(version, 4);
   assert.deepEqual(places[0].visits[0].tags, ['sushi']);
 });
 await test('import: tags in a file are normalised; a v2 file (no tags) still imports as v3', () => {
   const file = { version: 3, places: [place('x', 'X', [{ ...visit('x1', '2026-01-01'), tags: ['Ramen', ' Trip 1 '] }])] };
   assert.deepEqual(parseImport(JSON.stringify(file)).places[0].visits[0].tags, ['ramen', 'trip-1']);
   const v2 = parseImport(JSON.stringify({ version: 2, places: [place('y', 'Y', [visit('y1', '2026-01-01')])] }));
-  assert.equal(v2.version, 3);
+  assert.equal(v2.version, 4);
   assert.equal('tags' in v2.places[0].visits[0], false);
-  assert.throws(() => parseImport(JSON.stringify({ version: 4, places: [] })), /newer version/);
+  assert.throws(() => parseImport(JSON.stringify({ version: 5, places: [] })), /newer version/);
 });
 await test('merge: a visit whose only difference is its tags is a conflict (not silently "identical")', () => {
   const mineP = place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['ramen'] })]);
@@ -442,6 +460,40 @@ await test('merge: a visit whose only difference is its tags is a conflict (not 
   const sameDifferentOrder = place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['ramen'] })]);
   assert.equal(planMerge([place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['a', 'b'] })])], [place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['b', 'a'] })])]).identical, 1);
   assert.equal(planMerge([mineP], [sameDifferentOrder]).identical, 1);
+});
+
+/* ---------- visit time ---------- */
+await test('visit time: always set (default 00:01), HH:MM, validated, kept or cleared through the store', async () => {
+  for (const ok of ['00:00', '09:30', '23:59']) assert.equal(isValidTimeString(ok), true, ok);
+  for (const bad of ['9:30', '24:00', '12:60', '12:30:00', '', null, 930]) assert.equal(isValidTimeString(bad), false, String(bad));
+  assert.ok(validateVisitFields({ date: '2026-01-01', time: '25:00' }).errors.time);
+  assert.equal(validateVisitFields({ date: '2026-01-01', time: '' }).value.time, '00:01'); // missing -> default
+  const store = createStore(memoryRepo());
+  const p = await store.addPlace({ ...base, visit: { date: '2026-10-04', time: '08:15' } });
+  assert.equal(p.visits[0].time, '08:15');
+  const edited = await store.updateVisit(p.id, p.visits[0].id, { date: '2026-10-04', time: '' }); // Reset / cleared
+  assert.equal(edited.visits[0].time, DEFAULT_TIME);
+  assert.equal((await store.addPlace({ ...base, visit: { date: '2026-10-04' } })).visits[0].time, DEFAULT_TIME);
+  const { places } = parseImport(JSON.stringify(buildExport([{ ...p }])));
+  assert.equal(places[0].visits[0].time, '08:15');
+});
+await test('visit time: files and stored data without it get the default', async () => {
+  const { places } = parseImport(JSON.stringify({ version: 1, places: [v1] }));
+  assert.equal(places[0].visits[0].time, '00:01');
+  const repo = memoryRepo([place('x', 'X', [visit('a', '2026-01-01'), visit('b', '2026-01-02', { time: '07:30' })])]);
+  const store = createStore(repo);
+  await store.load();
+  assert.deepEqual(store.places[0].visits.map((v) => v.time), ['00:01', '07:30']);
+  assert.equal(repo._writes.replaceAll, 1);
+  await createStore(repo).load();
+  assert.equal(repo._writes.replaceAll, 1); // already upgraded: no rewrite
+});
+await test('visits on the same day sort by time, newest first; a time difference is a merge conflict', () => {
+  const vs = [visit('a', '2026-01-01', { time: '09:00' }), visit('b', '2026-01-01', { time: '18:30' }), visit('c', '2026-01-01'), visit('d', '2026-01-02')];
+  assert.deepEqual(sortVisits(vs).map((v) => v.id), ['d', 'b', 'a', 'c']);
+  const m = place('p1', 'R', [visit('v1', '2026-01-10', { time: '09:00' })]);
+  const t = place('p1', 'R', [visit('v1', '2026-01-10', { time: '10:00' })]);
+  assert.equal(planMerge([m], [t]).conflicts.length, 1);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', with failures' : ''}`);

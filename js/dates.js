@@ -1,5 +1,5 @@
-// Dates are stored as plain "YYYY-MM-DD" strings (no time zone), so a place visited on
-// Oct 4 is always Oct 4 no matter where the device is later.
+// Dates are stored as plain "YYYY-MM-DD" strings and times as "HH:MM" (no time zone), so a place
+// visited on Oct 4 at 14:05 is always that, no matter where the device is later.
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -7,6 +7,25 @@ const pad = (n) => String(n).padStart(2, '0');
 export function todayLocal() {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Time given to visits that have none (imported or older data), and what "Reset" restores. */
+export const DEFAULT_TIME = '00:01';
+
+/** The current time in the device's local time zone, as HH:MM. */
+export function nowLocalTime() {
+  const d = new Date();
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** True for a time of day written as HH:MM (24-hour). */
+export const isValidTimeString = (value) => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+
+/** "14:05" -> "2:05 PM" (in the user's locale). */
+export function formatTime(value) {
+  if (!isValidTimeString(value)) return String(value ?? '');
+  const [h, m] = value.split(':').map(Number);
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 /** True for a real calendar date written as YYYY-MM-DD. */

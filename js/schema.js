@@ -4,8 +4,9 @@
 // v2: one record per LOCATION, with a list of visits (each with its own date/rating/notes/photos).
 //
 // v3: visits may also carry tags (lowercase strings). Optional, so v2 data needs no conversion.
+// v4: visits may also carry a time of day ("HH:MM"). Required; older visits get 00:01.
 //
-// @typedef {Object} Visit  { id, date, rating?, notes?, tags?, photos?, createdAt, updatedAt }
+// @typedef {Object} Visit  { id, date, time, rating?, notes?, tags?, photos?, createdAt, updatedAt }
 // @typedef {Object} Place  { id, name, latitude, longitude, visits: Visit[], createdAt, updatedAt }
 
 export const isLegacyPlace = (p) =>
@@ -31,10 +32,10 @@ export function migratePlaceV1(p) {
   return { ...rest, visits: [visit] };
 }
 
-/** Newest first (by visit date, then by when it was entered). */
+/** Newest first (by visit date, then time of day, then by when it was entered). */
 export function sortVisits(visits) {
   return [...visits].sort(
-    (a, b) => b.date.localeCompare(a.date) || String(b.createdAt).localeCompare(String(a.createdAt)),
+    (a, b) => b.date.localeCompare(a.date) || (b.time ?? '').localeCompare(a.time ?? '') || String(b.createdAt).localeCompare(String(a.createdAt)),
   );
 }
 

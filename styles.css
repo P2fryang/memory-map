@@ -149,7 +149,7 @@ h3 { margin: 22px 0 6px; font-size: 1rem; }
 /* ---------- form ---------- */
 .field { margin-top: 16px; display: grid; gap: 6px; }
 .field label, .field .label { font-weight: 600; }
-input[type="text"], input[type="date"], textarea {
+input[type="text"], input[type="date"], input[type="time"], textarea {
   width: 100%; min-height: 48px; padding: 10px 12px;
   font: inherit; font-size: 16px; /* 16px stops iOS zooming on focus */
   color: var(--ink); background: var(--paper);
@@ -306,9 +306,20 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .tag-option:hover { background: var(--fog); }
 .tag-new { font-weight: 600; color: var(--lagoon-dark); }
 
-.timeline-filter { margin-top: 8px; }
+.tag-filter { margin-top: 8px; }
+.list-results { margin-top: 8px; }
 .timeline-body { margin-top: 4px; }
 .segments { display: flex; margin-top: 8px; border: 1.5px solid var(--line); border-radius: 10px; overflow: hidden; }
 .segment { flex: 1; min-height: 44px; font: inherit; font-weight: 600; color: var(--ink); background: var(--paper); border: 0; cursor: pointer; }
 .segment + .segment { border-left: 1.5px solid var(--line); }
 .segment.on { color: #fff; background: var(--lagoon); }
+
+/* ---------- time field, import comparison ---------- */
+.input-row { display: flex; gap: 8px; }
+.input-row input { flex: 1; min-width: 0; }
+.compare { width: 100%; margin-top: 8px; table-layout: fixed; border-collapse: collapse; font-size: .85rem; }
+.compare th, .compare td { padding: 4px 6px; text-align: left; vertical-align: top; border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; }
+.compare thead th { border-top: 0; }
+.compare th { width: 24%; color: var(--muted); font-weight: 600; }
+.compare thead th:not(:first-child) { width: 38%; }
+.clash { display: grid; gap: 2px; margin-top: 12px; }

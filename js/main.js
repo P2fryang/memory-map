@@ -10,7 +10,7 @@ import { buildExport, parseImport, ImportError } from './exportImport.js';
 import { applyMerge, planMerge } from './merge.js';
 import { nearestPlace } from './geo.js';
 import { buildTimeline } from './timeline.js';
-import { pruneFilter, tagStats } from './tags.js';
+import { filterPlaces, pruneFilter, tagStats } from './tags.js';
 import { ValidationError } from './validation.js';
 import { customSource, localSource, osmSource, probeSource, sourceLabel, styleFor, validateTileUrl } from './tiles.js';
 import { createMapFileStore } from './mapFiles.js';
@@ -110,6 +110,9 @@ function renderPanel() {
     case 'list':
       panelBody.replaceChildren(renderList({
         places: store.places,
+        stats: tagStats(store.places),
+        filter: state.tagFilter,
+        onFilterChange: setTagFilter,
         onSelect: selectPlace,
         onClose: desktop.matches ? null : () => setView('none'),
       }));
@@ -154,12 +157,11 @@ function renderPanel() {
       break;
     case 'timeline': {
       const stats = tagStats(store.places);
-      state.tagFilter = pruneFilter(state.tagFilter, stats); // a tag nobody uses any more drops out of the filter
       state.timeline = renderTimeline({
         getModel: (filter) => buildTimeline(store.places, filter),
         stats,
         filter: state.tagFilter,
-        onFilterChange: (filter) => { state.tagFilter = filter; },
+        onFilterChange: setTagFilter,
         onChange: (s) => mapView.setVisibility(s.counts),
         onClose: () => setView('none'),
       });
@@ -170,6 +172,24 @@ function renderPanel() {
       panelBody.replaceChildren();
   }
   panel.scrollTop = 0;
+}
+
+/* ---------- tag filter: one filter for the Places list, the map and the timeline ---------- */
+
+const filterActive = () => state.tagFilter.tags.length > 0;
+
+function setTagFilter(filter) {
+  state.tagFilter = filter;
+  applyMapFilter();
+}
+
+/** Pins follow the filter (badges count matching visits). The timeline draws its own pins while it is open. */
+function applyMapFilter() {
+  $('#places-button').textContent = filterActive() ? 'Places · filtered' : 'Places';
+  if (state.view === 'timeline') return;
+  mapView.setVisibility(filterActive()
+    ? new Map(filterPlaces(store.places, state.tagFilter).map((p) => [p.id, p.visits.length]))
+    : null);
 }
 
 function updateEmpty() {
@@ -188,7 +208,7 @@ function enterTimeline() {
 function leaveTimeline() {
   state.timeline?.destroy();
   state.timeline = null;
-  mapView.setVisibility(null);
+  applyMapFilter();
   mapView.leaveOverview();
 }
 
@@ -257,13 +277,15 @@ function endForm() {
 
 async function saveForm(values) {
   const ctx = state.formCtx;
-  const visit = { date: values.date, rating: values.rating, notes: values.notes, tags: values.tags };
+  const visit = { date: values.date, time: values.time, rating: values.rating, notes: values.notes, tags: values.tags };
   const base = { name: values.name, latitude: values.latitude, longitude: values.longitude };
   try {
     switch (ctx.mode) {
       case 'add-place':
-        await store.addPlace({ ...base, visit });
-        toast('Saved to your map.');
+        const added = await store.addPlace({ ...base, visit });
+        toast(filterActive() && !filterPlaces([added], state.tagFilter).length
+          ? 'Saved. The tag filter is hiding it on the map.'
+          : 'Saved to your map.');
         break;
       case 'edit-place':
         await store.updatePlace(ctx.placeId, base);
@@ -674,7 +696,9 @@ async function toggleLocalOnline(checked) {
 /* ---------- wiring ---------- */
 
 store.subscribe(() => {
+  state.tagFilter = pruneFilter(state.tagFilter, tagStats(store.places)); // a tag nobody uses any more drops out
   mapView.setPlaces(visiblePlaces());
+  applyMapFilter();
   if (state.view === 'list' || state.view === 'settings') renderPanel();
   updateEmpty();
 });

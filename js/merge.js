@@ -7,43 +7,35 @@
 //       'merge'  combine visits; newer edit wins for name/location and for clashing visits
 //       'mine'   keep what's on this device
 //       'theirs' use the file's version
+//   On top of that choice, each visit that differs can be overridden: keep mine / use the file's.
+//   A choice is { base, visits: { [visitId]: 'mine' | 'theirs' } } (a plain string means just the base).
 import { distanceMeters } from './geo.js';
 import { sortVisits } from './schema.js';
 
 export const RESOLUTIONS = ['merge', 'mine', 'theirs'];
 
-const visitKey = (v) => JSON.stringify([v.date, v.rating ?? null, v.notes ?? '', v.photos ?? [], [...(v.tags ?? [])].sort()]);
+const visitKey = (v) => JSON.stringify([v.date, v.time ?? null, v.rating ?? null, v.notes ?? '', v.photos ?? [], [...(v.tags ?? [])].sort()]);
 const sameVisit = (a, b) => visitKey(a) === visitKey(b);
 const stamp = (iso) => Date.parse(iso) || 0;
 
-const sameName = (a, b) => a.name === b.name;
-const sameSpot = (a, b) => distanceMeters(a.latitude, a.longitude, b.latitude, b.longitude) < 1;
+export const sameName = (a, b) => a.name === b.name;
+export const sameSpot = (a, b) => distanceMeters(a.latitude, a.longitude, b.latitude, b.longitude) < 1;
 
-function classify(existing, incoming) {
+/** Visits that exist on both sides (same id) but differ: [{ mine, theirs }]. */
+export function clashingVisits(existing, incoming) {
   const mine = new Map(existing.visits.map((v) => [v.id, v]));
-  let visitsDiffer = false;
-  let newVisits = 0;
-  for (const v of incoming.visits) {
-    const m = mine.get(v.id);
-    if (!m) newVisits++;
-    else if (!sameVisit(m, v)) visitsDiffer = true;
-  }
-  if (!sameName(existing, incoming) || !sameSpot(existing, incoming) || visitsDiffer) return { kind: 'conflict' };
-  return newVisits === 0 ? { kind: 'identical' } : { kind: 'merge', newVisits };
+  return incoming.visits
+    .filter((v) => mine.has(v.id) && !sameVisit(mine.get(v.id), v))
+    .map((v) => ({ mine: mine.get(v.id), theirs: v }));
 }
 
-/** Why a conflict is a conflict, in plain words. */
-export function describeConflict({ existing, incoming }) {
-  const reasons = [];
-  if (!sameName(existing, incoming)) reasons.push(`Name: “${existing.name}” here, “${incoming.name}” in the file`);
-  if (!sameSpot(existing, incoming)) {
-    const m = Math.round(distanceMeters(existing.latitude, existing.longitude, incoming.latitude, incoming.longitude));
-    reasons.push(`Location differs by ${m} m`);
+function classify(existing, incoming) {
+  const have = new Set(existing.visits.map((v) => v.id));
+  const newVisits = incoming.visits.filter((v) => !have.has(v.id)).length;
+  if (!sameName(existing, incoming) || !sameSpot(existing, incoming) || clashingVisits(existing, incoming).length) {
+    return { kind: 'conflict' };
   }
-  const mine = new Map(existing.visits.map((v) => [v.id, v]));
-  const edited = incoming.visits.filter((v) => mine.has(v.id) && !sameVisit(mine.get(v.id), v)).length;
-  if (edited) reasons.push(`${edited} visit${edited === 1 ? '' : 's'} edited differently`);
-  return reasons;
+  return newVisits === 0 ? { kind: 'identical' } : { kind: 'merge', newVisits };
 }
 
 /** Sorts incoming places into: added, merged (auto), identical (count), conflicts. */
@@ -77,14 +69,22 @@ export function mergePlaces(a, b) {
   };
 }
 
+/** Resolves one conflict: the place-level choice first, then any per-visit overrides on top. */
+function resolveConflict({ existing, incoming }, choice) {
+  const { base = 'merge', visits = {} } = typeof choice === 'string' ? { base: choice } : (choice ?? {});
+  const result = base === 'theirs' ? incoming : base === 'mine' ? existing : mergePlaces(existing, incoming);
+  if (!Object.keys(visits).length) return result;
+  const side = { mine: existing, theirs: incoming };
+  return {
+    ...result,
+    visits: result.visits.map((v) => side[visits[v.id]]?.visits.find((x) => x.id === v.id) ?? v),
+  };
+}
+
 /** Builds the final list. `choices[i]` is the resolution for plan.conflicts[i] (default 'merge'). */
 export function applyMerge(existing, plan, choices = []) {
   const replacement = new Map();
   for (const m of plan.merged) replacement.set(m.existing.id, mergePlaces(m.existing, m.incoming));
-  plan.conflicts.forEach((c, i) => {
-    const choice = choices[i] ?? 'merge';
-    if (choice === 'theirs') replacement.set(c.existing.id, c.incoming);
-    else if (choice === 'merge') replacement.set(c.existing.id, mergePlaces(c.existing, c.incoming));
-  });
+  plan.conflicts.forEach((c, i) => replacement.set(c.existing.id, resolveConflict(c, choices[i])));
   return [...existing.map((p) => replacement.get(p.id) ?? p), ...plan.added];
 }

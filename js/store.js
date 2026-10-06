@@ -1,3 +1,4 @@
+import { DEFAULT_TIME } from './dates.js';
 import { isLegacyPlace, migratePlaceV1 } from './schema.js';
 import { assertValidPlaceBase, assertValidVisitFields } from './validation.js';
 
@@ -41,18 +42,20 @@ export function createStore(repo) {
       return () => listeners.delete(fn);
     },
 
-    /** Loads from storage, upgrading any v1 records (one visit per place) in place. */
+    /** Loads from storage, upgrading v1 records (one visit per place) and giving visits without a time the default. */
     async load() {
       const raw = await repo.getAll();
       const migrated = raw.map(migratePlaceV1).filter((p) => Array.isArray(p.visits) && p.visits.length > 0);
-      if (raw.some(isLegacyPlace)) {
-        try { await repo.replaceAll(migrated); } catch (err) { console.warn('Could not save migrated data', err); }
+      const withTime = (p) => (p.visits.every((v) => v.time) ? p : { ...p, visits: p.visits.map((v) => (v.time ? v : { ...v, time: DEFAULT_TIME })) });
+      const upgraded = migrated.map(withTime);
+      if (raw.some(isLegacyPlace) || upgraded.some((p, i) => p !== migrated[i])) {
+        try { await repo.replaceAll(upgraded); } catch (err) { console.warn('Could not save migrated data', err); }
       }
-      places = migrated;
+      places = upgraded;
       emit();
     },
 
-    /** input: { name, latitude, longitude, visit: { date, rating?, notes? } } */
+    /** input: { name, latitude, longitude, visit: { date, time?, rating?, notes?, tags? } } */
     async addPlace(input) {
       const base = assertValidPlaceBase(input);
       const visit = assertValidVisitFields(input.visit);

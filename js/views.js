@@ -1,14 +1,13 @@
 // Panel views: functions that build DOM from data and call back into main.js.
 // (On phones the panel is a bottom sheet; on desktop it's the left sidebar.)
 import { h } from './dom.js';
-import { formatDate, todayLocal } from './dates.js';
+import { DEFAULT_TIME, formatDate, formatTime, nowLocalTime, todayLocal } from './dates.js';
 import { ratingDisplay, ratingInput } from './rating.js';
 import { latestVisit, sortVisits } from './schema.js';
 import { validatePlaceBase, validateVisitFields } from './validation.js';
 import { validateTileUrl } from './tiles.js';
-import { placeTags } from './tags.js';
+import { MAX_TAGS_PER_VISIT, filterPlaces, placeTags } from './tags.js';
 import { renderTagPicker } from './tagPicker.js';
-import { MAX_TAGS_PER_VISIT } from './tags.js';
 
 const formatCoords = (lat, lng) => `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -26,16 +25,49 @@ const closeButton = (onClose, label = 'Close') =>
 export const EMPTY_TITLE = 'No places yet.';
 export const EMPTY_TEXT = "Pin somewhere you've been to start building your personal map. You can also tap the map to pin any spot.";
 
+/* ---------- tag filter (Places list and timeline) ---------- */
+
+/** Tag picker plus an All/Any switch (shown once two tags are picked). onChange({ tags, match }). */
+function renderTagFilter({ stats, filter: initial, onChange }) {
+  let filter = { tags: [...initial.tags], match: initial.match };
+  const picker = renderTagPicker({
+    selected: filter.tags, stats, allowNew: false, label: 'Filter by tag', placeholder: 'Filter by tag',
+    onChange: (tags) => { filter = { ...filter, tags }; paint(); emit(); },
+  });
+  const buttons = [['all', 'All of these'], ['any', 'Any of these']].map(([value, text]) =>
+    h('button', {
+      type: 'button', class: 'segment', role: 'radio', 'data-match': value,
+      onclick: () => { filter = { ...filter, match: value }; paint(); emit(); },
+    }, text));
+  const control = h('div', { class: 'segments', role: 'radiogroup', 'aria-label': 'Match', hidden: true }, buttons);
+
+  function emit() { onChange({ tags: [...filter.tags], match: filter.match }); }
+  function paint() {
+    control.hidden = filter.tags.length < 2;
+    for (const b of buttons) {
+      const on = b.dataset.match === filter.match;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    }
+  }
+  paint();
+  return h('div', { class: 'tag-filter' }, picker.el, control);
+}
+
 /* ---------- list ---------- */
 
-export function renderList({ places, onSelect, onClose }) {
-  const rows = places
-    .map((p) => ({ place: p, last: latestVisit(p) }))
-    .sort((a, b) => b.last.date.localeCompare(a.last.date) || b.place.createdAt.localeCompare(a.place.createdAt));
-  return h('section', { class: 'view' },
-    h('header', { class: 'view-head' }, h('h2', {}, 'Places'), onClose ? closeButton(onClose) : null),
-    rows.length === 0
-      ? h('div', { class: 'empty-inline' }, h('p', { class: 'strong' }, EMPTY_TITLE), h('p', {}, EMPTY_TEXT))
+/** The filter is shared with the map and the timeline: onFilterChange(filter) tells the caller to keep it. */
+export function renderList({ places, stats, filter, onFilterChange, onSelect, onClose }) {
+  const results = h('div', { class: 'list-results' });
+
+  function paint(f) {
+    const rows = filterPlaces(places, f)
+      .map((p) => ({ place: p, last: latestVisit(p) }))
+      .sort((a, b) => b.last.date.localeCompare(a.last.date) || b.place.createdAt.localeCompare(a.place.createdAt));
+    results.replaceChildren(rows.length === 0
+      ? h('div', { class: 'empty-inline' },
+          h('p', { class: 'strong' }, f.tags.length ? 'No places match these tags.' : EMPTY_TITLE),
+          h('p', {}, f.tags.length ? 'Try fewer tags, or switch to “Any of these”.' : EMPTY_TEXT))
       : h('ul', { class: 'place-list' }, rows.map(({ place, last }) =>
           h('li', {},
             h('button', { type: 'button', class: 'place-row', onclick: () => onSelect(place.id) },
@@ -50,7 +82,17 @@ export function renderList({ places, onSelect, onClose }) {
                     placeTags(place).slice(0, 3).join(' · ') + (placeTags(place).length > 3 ? ` +${placeTags(place).length - 3}` : ''))
                 : null,
             ),
-          ))),
+          ))));
+  }
+
+  const filterEl = stats.length
+    ? renderTagFilter({ stats, filter, onChange: (f) => { onFilterChange(f); paint(f); } })
+    : null;
+  paint(filter);
+  return h('section', { class: 'view' },
+    h('header', { class: 'view-head' }, h('h2', {}, 'Places'), onClose ? closeButton(onClose) : null),
+    filterEl,
+    results,
   );
 }
 
@@ -76,6 +118,7 @@ export function renderDetail({ place, onAddVisit, onEditPlace, onDeletePlace, on
       h('li', {},
         h('div', { class: 'visit-head' },
           h('span', { class: 'visit-date' }, formatDate(v.date)),
+          h('span', { class: 'hint' }, formatTime(v.time)),
           ratingDisplay(v.rating),
         ),
         v.notes ? h('p', { class: 'place-notes' }, v.notes) : null,
@@ -95,7 +138,7 @@ export function renderDetail({ place, onAddVisit, onEditPlace, onDeletePlace, on
 /* ---------- form ---------- */
 
 /**
- * One form for all four jobs. `show` picks the sections: { place: name + map location, visit: date/rating/notes }.
+ * One form for all four jobs. `show` picks the sections: { place: name + map location, visit: date/time/rating/notes/tags }.
  * onSave(values) resolves true on success; values holds only the shown sections' fields.
  * Returns { el, setCoords, focus }.
  */
@@ -108,10 +151,14 @@ export function renderForm({ title, subtitle, show, initial = {}, coords, tagSta
     value: initial.name ?? '', 'aria-describedby': 'e-name',
   });
   const dateInput = h('input', { id: 'f-date', type: 'date', value: initial.date ?? todayLocal(), 'aria-describedby': 'e-date' });
+  // New visits start at the current time; Reset puts the default (00:01) back.
+  const timeInput = h('input', { id: 'f-time', type: 'time', value: initial.date ? (initial.time ?? DEFAULT_TIME) : nowLocalTime(), 'aria-describedby': 'e-time' });
+  const clearTime = h('button', { type: 'button', class: 'btn small', onclick: () => { timeInput.value = DEFAULT_TIME; } }, 'Reset');
   const notesInput = h('textarea', { id: 'f-notes', rows: '4' }, initial.notes ?? '');
   const coordsText = h('span', {}, formatCoords(current.latitude, current.longitude));
   const errName = h('p', { class: 'field-error', id: 'e-name', role: 'alert' });
   const errDate = h('p', { class: 'field-error', id: 'e-date', role: 'alert' });
+  const errTime = h('p', { class: 'field-error', id: 'e-time', role: 'alert' });
   const saveButton = h('button', { type: 'submit', class: 'btn primary' }, 'Save');
   const tagPicker = show.visit
     ? renderTagPicker({ selected: initial.tags ?? [], stats: tagStats, allowNew: true, label: 'Tags', placeholder: 'Add a tag', max: MAX_TAGS_PER_VISIT })
@@ -123,6 +170,11 @@ export function renderForm({ title, subtitle, show, initial = {}, coords, tagSta
 
     show.place ? h('div', { class: 'field' }, h('label', { for: 'f-name' }, 'Name'), nameInput, errName) : null,
     show.visit ? h('div', { class: 'field' }, h('label', { for: 'f-date' }, 'Date'), dateInput, errDate) : null,
+    show.visit ? h('div', { class: 'field' },
+      h('label', { for: 'f-time' }, 'Time'),
+      h('div', { class: 'input-row' }, timeInput, clearTime),
+      errTime,
+    ) : null,
     show.visit ? h('div', { class: 'field' },
       h('span', { class: 'label' }, 'Rating (optional)'),
       ratingInput(rating, (v) => { rating = v; }),
@@ -156,16 +208,18 @@ export function renderForm({ title, subtitle, show, initial = {}, coords, tagSta
     }
     if (show.visit) {
       tagPicker.commitPending(); // a tag typed but not yet entered still counts
-      const r = validateVisitFields({ date: dateInput.value, rating, notes: notesInput.value, tags: tagPicker.getTags() });
+      const r = validateVisitFields({ date: dateInput.value, time: timeInput.value, rating, notes: notesInput.value, tags: tagPicker.getTags() });
       Object.assign(errors, r.errors);
       Object.assign(values, r.value);
     }
     errName.textContent = errors.name ?? '';
     errDate.textContent = errors.date ?? '';
+    errTime.textContent = errors.time ?? '';
     setInvalid(nameInput, errors.name);
     setInvalid(dateInput, errors.date);
+    setInvalid(timeInput, errors.time);
     if (Object.keys(errors).length) {
-      (errors.name ? nameInput : dateInput).focus();
+      (errors.name ? nameInput : errors.date ? dateInput : timeInput).focus();
       return;
     }
     saveButton.disabled = true;
@@ -317,25 +371,7 @@ export function renderTimeline({ getModel, stats, filter: initialFilter, onFilte
   const head = h('header', { class: 'view-head' }, h('h2', {}, 'Timeline'), closeButton(onClose));
 
   /* --- tag filter --- */
-  const picker = renderTagPicker({
-    selected: filter.tags, stats, allowNew: false, label: 'Filter by tag', placeholder: 'Filter by tag',
-    onChange: (tags) => { filter = { ...filter, tags }; paintMatch(); refilter(); },
-  });
-  const matchButtons = [['all', 'All of these'], ['any', 'Any of these']].map(([value, text]) =>
-    h('button', {
-      type: 'button', class: 'segment', role: 'radio', 'data-match': value,
-      onclick: () => { filter = { ...filter, match: value }; paintMatch(); refilter(); },
-    }, text));
-  const matchControl = h('div', { class: 'segments', role: 'radiogroup', 'aria-label': 'Match', hidden: true }, matchButtons);
-  function paintMatch() {
-    matchControl.hidden = filter.tags.length < 2;
-    for (const b of matchButtons) {
-      const on = b.dataset.match === filter.match;
-      b.classList.toggle('on', on);
-      b.setAttribute('aria-checked', String(on));
-    }
-  }
-  paintMatch();
+  const tagFilter = renderTagFilter({ stats, filter, onChange: (f) => { filter = f; refilter(); } });
 
   /* --- slider --- */
   function stop() {
@@ -402,8 +438,7 @@ export function renderTimeline({ getModel, stats, filter: initialFilter, onFilte
   }
 
   return {
-    el: h('section', { class: 'view timeline' }, head,
-      h('div', { class: 'timeline-filter' }, picker.el, matchControl), body),
+    el: h('section', { class: 'view timeline' }, head, tagFilter, body),
     ready() { current.apply(); },
     destroy: stop,
     showPlace(id) {

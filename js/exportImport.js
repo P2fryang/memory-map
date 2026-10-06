@@ -1,5 +1,5 @@
 import { SCHEMA_VERSION } from './config.js';
-import { isValidTimestamp } from './dates.js';
+import { DEFAULT_TIME, isValidTimestamp } from './dates.js';
 import { migratePlaceV1 } from './schema.js';
 import { validatePlaceBase, validateVisitFields } from './validation.js';
 
@@ -24,6 +24,8 @@ const migrations = {
   // v3 added optional tags on visits. Nothing to convert; the bump makes older apps refuse the
   // file instead of silently dropping the tags.
   2: (data) => ({ ...data, version: 3 }),
+  // v4 added an optional time of day on visits. Same reasoning as v3.
+  3: (data) => ({ ...data, version: 4 }),
 };
 
 /** Builds the object that gets written to the export file. */
@@ -48,7 +50,7 @@ function migrate(data) {
 function validateImportedVisit(raw, index, placeId, who) {
   const label = `${who}, visit ${index + 1}`;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ImportError(`${label} isn't in the expected format.`);
-  const { errors, value } = validateVisitFields(raw);
+  const { errors, value } = validateVisitFields({ ...raw, time: raw.time || DEFAULT_TIME }); // files from before visit times
   const first = Object.values(errors)[0];
   if (first) throw new ImportError(`${label}: ${first}`);
   const now = new Date().toISOString();

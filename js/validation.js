@@ -1,4 +1,4 @@
-import { isValidDateString } from './dates.js';
+import { DEFAULT_TIME, isValidDateString, isValidTimeString } from './dates.js';
 import { MAX_TAGS_PER_VISIT, MAX_TAG_LENGTH, normalizeTags } from './tags.js';
 
 export class ValidationError extends Error {
@@ -29,12 +29,18 @@ export function validatePlaceBase(input) {
   return { errors, value: { name, latitude, longitude } };
 }
 
-/** Date, rating, notes, tags, photos: the fields that belong to one visit. Returns { errors, value }. */
+/** Date, time, rating, notes, tags, photos: the fields that belong to one visit. Returns { errors, value }. */
 export function validateVisitFields(input) {
   const errors = {};
   const src = input ?? {};
 
   if (!isValidDateString(src.date)) errors.date = 'Enter a valid date.';
+
+  let time = DEFAULT_TIME; // every visit has a time; a missing one gets the default
+  if (!isBlank(src.time)) {
+    if (isValidTimeString(src.time)) time = src.time;
+    else errors.time = 'Enter a valid time.';
+  }
 
   let rating;
   if (!isBlank(src.rating)) {
@@ -69,7 +75,7 @@ export function validateVisitFields(input) {
     }
   }
 
-  const value = { date: src.date };
+  const value = { date: src.date, time };
   if (rating !== undefined) value.rating = rating;
   if (notes !== undefined) value.notes = notes;
   if (tags !== undefined) value.tags = tags;
