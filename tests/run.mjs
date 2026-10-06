@@ -8,6 +8,7 @@ import { DEFAULT_TIME, isValidDateString, isValidTimeString } from '../js/dates.
 import { migratePlaceV1, isLegacyPlace, latestVisit, sortVisits } from '../js/schema.js';
 import { planMerge, applyMerge, mergePlaces, clashingVisits } from '../js/merge.js';
 import { buildTimeline } from '../js/timeline.js';
+import { RAMP, rampColor } from '../js/ramp.js';
 import { distanceMeters, nearestPlace } from '../js/geo.js';
 import { validateTileUrl, styleFor, osmSource, customSource, localSource, localStyle, sourceLabel } from '../js/tiles.js';
 import { parseHeader, MapFileError } from '../js/pmtilesHeader.js';
@@ -433,6 +434,7 @@ await test('timeline route: visits in order (date, time, place name, created, id
   const t = buildTimeline([Br, Al, C]);
   assert.deepEqual(t.stateAt(0).route, [[3, 0], [1, 0], [2, 0]]); // same time: Alpha before Bravo by name
   assert.deepEqual(t.stateAt(1).route, [[3, 0], [1, 0], [2, 0], [1, 0]]); // a2, a3 are one stay
+  assert.deepEqual(t.stateAt(1).routeIds, ['c', 'a', 'b', 'a']);
   const early = { ...place('e', 'Same', [visit('e1', '2026-02-01', { time: '08:00' })], at(5)), };
   const late = place('l', 'Same', [visit('l1', '2026-02-01', { time: '08:00', createdAt: '2026-10-05T00:00:00.000Z' })], at(6));
   assert.deepEqual(buildTimeline([late, early]).stateAt(0).route, [[5, 0], [6, 0]]); // same name: earlier created first
@@ -440,6 +442,14 @@ await test('timeline route: visits in order (date, time, place name, created, id
   const y = place('y', 'Same', [visit('v-a', '2026-02-01', { time: '08:00' })], at(8));
   assert.deepEqual(buildTimeline([x, y]).stateAt(0).route, [[8, 0], [7, 0]]); // same created: visit id
   assert.deepEqual(buildTimeline([A, B, C], { tags: ['ramen'], match: 'all' }).stateAt(1).route.length, 3); // follows the filter: A, B, back to A (c1 and a3 are filtered out)
+});
+await test('age colour ramp: ends, middle and clamping', () => {
+  assert.equal(rampColor(0), RAMP[0]);
+  assert.equal(rampColor(0.5), RAMP[1]);
+  assert.equal(rampColor(1), RAMP[2]);
+  assert.equal(rampColor(-3), RAMP[0]);
+  assert.equal(rampColor(9), RAMP[2]);
+  assert.match(rampColor(0.25), /^#[0-9a-f]{6}$/);
 });
 await test('timeline with a tag filter counts only matching visits and dates', () => {
   const t = buildTimeline([A, B, C], { tags: ['ramen'], match: 'all' });

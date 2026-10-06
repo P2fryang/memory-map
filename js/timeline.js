@@ -26,6 +26,7 @@ export function buildTimeline(allPlaces, filter = null) {
      *   counts   Map(placeId -> visits on or before that date) for places already pinned
      *   onDate   places visited exactly on that date
      *   route    [lng, lat] of each place in visit order up to that date (repeat stays at one place collapse)
+     *   routeIds the place id of each route point
      */
     stateAt(index) {
       const date = dates[Math.max(0, Math.min(index, dates.length - 1))];
@@ -37,12 +38,13 @@ export function buildTimeline(allPlaces, filter = null) {
         if (p.visits.some((v) => v.date === date)) onDate.push(p);
       }
       const route = [];
+      const routeIds = [];
       let last = null;
       for (const { place, visit } of steps) {
         if (visit.date > date) break;
-        if (place.id !== last) { route.push([place.longitude, place.latitude]); last = place.id; }
+        if (place.id !== last) { route.push([place.longitude, place.latitude]); routeIds.push(place.id); last = place.id; }
       }
-      return { date, counts, onDate, route };
+      return { date, counts, onDate, route, routeIds };
     },
   };
 }

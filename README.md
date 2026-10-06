@@ -114,7 +114,8 @@ This uses the PMTiles library (`pmtiles@3.2.0` from jsDelivr, cached by the serv
 
 Toolbar → **Timeline**: a slider over every visit date. Pins appear as you reach their first visit and the badge counts
 revisits so far; **Play** replays it. A line joins the pins in the order they were visited (date, then time, then place name,
-then the visit's created time, then its id; consecutive visits to the same place make no line). It follows the tag filter.
+then the visit's created time, then its id; consecutive visits to the same place make no line). It follows the tag filter. The line is a gradient and the pins are tinted by when they were first visited, both from the
+same older-to-newer ramp (`js/ramp.js`, with a legend in the timeline panel); colours are relative to the pins shown so far.
 
 By default it is intentionally low-detail (zoom limited to 1–8 in `TIMELINE_ZOOM`) and the camera stays still while it plays,
 so it loads few tiles. Tick **Zoom in on the pins shown** (for example with a `trip:` tag filter) to widen the zoom range to
@@ -132,6 +133,7 @@ appears. This loads more map tiles, which is why it is opt-in.
       schema.js        data shape + v1->v2 migration     validation.js  field rules
       exportImport.js  versioned JSON export/import       merge.js       "Add" import planning + resolution
       timeline.js      timeline state by date (+ tag filter)   geo.js     distance / nearby lookup
+      ramp.js          older-to-newer colours (timeline line, pins, legend)
       tags.js          tag rules, usage ranking, filtering   tagPicker.js  the tag entry/filter control
       mapView.js       MapLibre adapter (only file that touches the map library)
       tiles.js         tile sources, style building (online + offline layering), reachability probe

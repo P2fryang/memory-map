@@ -11,10 +11,12 @@
 //   enterOverview(places, {minZoom, maxZoom}) / leaveOverview()   low-detail whole-world view
 //   setZoomLimits({minZoom, maxZoom})   change the zoom range while in the overview
 //   setRoute([[lng, lat], ...])   the timeline's line through the pins, in order (empty clears it)
+//   setPinColors(Map(id -> colour) | null)   timeline: colour pins by age (null restores the default)
 //
 // Callbacks: onMapClick(lat, lng), onPlaceClick(id), onDraftMove(lat, lng),
 // onTileError(), getPadding() -> {top,right,bottom,left}.
 import { DEFAULT_VIEW } from './config.js';
+import { RAMP } from './ramp.js';
 import { BLANK_STYLE, styleFor } from './tiles.js';
 
 const PIN_SVG =
@@ -43,7 +45,7 @@ function unavailableMap(container) {
   return {
     available: false, setTileSource: noop, setPlaces: noop, setVisibility: noop, setSelected: noop,
     setDraft: noop, clearDraft: noop, flyTo: noop, fitToPlaces: noop, enterOverview: noop, leaveOverview: noop,
-    setZoomLimits: noop, setRoute: noop,
+    setZoomLimits: noop, setRoute: noop, setPinColors: noop,
   };
 }
 
@@ -84,11 +86,15 @@ export function createMapView(container, handlers) {
     try {
       const source = map.getSource('route');
       if (source) { source.setData(data); return; }
-      map.addSource('route', { type: 'geojson', data });
+      map.addSource('route', { type: 'geojson', data, lineMetrics: true }); // lineMetrics enables the gradient
       map.addLayer({
         id: 'route', type: 'line', source: 'route',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#134e68', 'line-width': 3, 'line-opacity': 0.8 },
+        paint: {
+          'line-width': 3,
+          'line-opacity': 0.85,
+          'line-gradient': ['interpolate', ['linear'], ['line-progress'], ...RAMP.flatMap((color, i) => [i / (RAMP.length - 1), color])],
+        },
       });
     } catch { /* style still loading; style.load paints it */ }
   };
@@ -96,6 +102,7 @@ export function createMapView(container, handlers) {
 
   const markers = new Map(); // id -> { marker, el, total }
   let selectedId = null;
+  let pinColors = null; // timeline: Map(id -> colour)
   let visibility = null; // null = show everything; otherwise Map(id -> visits so far)
   let draft = null;
   let savedCamera = null;
@@ -110,6 +117,7 @@ export function createMapView(container, handlers) {
       const count = visibility ? visibility.get(id) ?? 0 : entry.total;
       entry.el.classList.toggle('hidden', visibility !== null && count === 0);
       entry.el.classList.toggle('selected', id === selectedId);
+      entry.el.style.setProperty('--pin-color', pinColors?.get(id) ?? '');
       paintBadge(entry.el, count);
     }
   };
@@ -207,6 +215,11 @@ export function createMapView(container, handlers) {
     setZoomLimits({ minZoom, maxZoom }) {
       map.setMinZoom(minZoom);
       map.setMaxZoom(maxZoom);
+    },
+
+    setPinColors(colors) {
+      pinColors = colors;
+      applyState();
     },
 
     setRoute(coordinates) {

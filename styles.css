@@ -174,7 +174,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .pin {
   width: 44px; height: 48px; padding: 0;
   display: flex; align-items: flex-end; justify-content: center;
-  color: var(--lagoon); background: none; border: 0; cursor: pointer;
+  color: var(--pin-color, var(--lagoon)); background: none; border: 0; cursor: pointer;
 }
 .pin svg {
   width: 30px; height: 38px; transform-origin: bottom center;
@@ -323,3 +323,8 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .compare th { width: 24%; color: var(--muted); font-weight: 600; }
 .compare thead th:not(:first-child) { width: 38%; }
 .clash { display: grid; gap: 2px; margin-top: 12px; }
+
+/* ---------- timeline legend ---------- */
+.legend { margin-top: 12px; }
+.legend-bar { height: 8px; border-radius: 4px; }
+.legend-labels { display: flex; justify-content: space-between; margin-top: 2px; }

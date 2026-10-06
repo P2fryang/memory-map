@@ -7,6 +7,7 @@ import { latestVisit, sortVisits } from './schema.js';
 import { validatePlaceBase, validateVisitFields } from './validation.js';
 import { validateTileUrl } from './tiles.js';
 import { MAX_TAGS_PER_VISIT, filterPlaces, placeTags } from './tags.js';
+import { RAMP } from './ramp.js';
 import { renderTagPicker } from './tagPicker.js';
 
 const formatCoords = (lat, lng) => `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
@@ -357,7 +358,7 @@ export function renderSettings({
  *   getModel(filter)   -> timeline model for that filter (see timeline.js)
  *   filter             { tags, match }   remembered by the caller between openings
  *   onFilterChange(f)  called whenever the user changes the filter
- *   onChange(state)    called with { date, counts, onDate, route } whenever the slider moves
+ *   onChange(state)    called with { date, counts, onDate, route, routeIds } whenever the slider moves
  *   region / onRegionChange(on)   the "Zoom in on the pins shown" checkbox (the caller moves the camera)
  * Returns { el, ready, destroy, showPlace }. Call ready() once mounted to apply the first state.
  */
@@ -389,7 +390,7 @@ export function renderTimeline({ getModel, stats, filter: initialFilter, onFilte
         h('p', { class: 'strong' }, filter.tags.length ? 'No visits match these tags.' : EMPTY_TITLE),
         h('p', {}, filter.tags.length ? 'Try fewer tags, or switch to “Any of these”.' : 'Pin a place and it will appear here.')));
       playButton = null;
-      return { n, apply: () => onChange({ date: null, counts: new Map(), onDate: [], route: [] }) };
+      return { n, apply: () => onChange({ date: null, counts: new Map(), onDate: [], route: [], routeIds: [] }) };
     }
 
     const dateLabel = h('p', { class: 'timeline-date' });
@@ -440,6 +441,9 @@ export function renderTimeline({ getModel, stats, filter: initialFilter, onFilte
 
   return {
     el: h('section', { class: 'view timeline' }, head, tagFilter, body,
+      h('div', { class: 'legend', role: 'img', 'aria-label': 'Line and pin colours run from older visits to newer ones' },
+        h('div', { class: 'legend-bar', style: `background: linear-gradient(to right, ${RAMP.join(', ')})` }),
+        h('div', { class: 'legend-labels hint' }, h('span', {}, 'Older'), h('span', {}, 'Newer'))),
       h('label', { class: 'check' },
         h('input', { type: 'checkbox', checked: region, onchange: (event) => onRegionChange(event.target.checked) }),
         h('span', {}, 'Zoom in on the pins shown')),

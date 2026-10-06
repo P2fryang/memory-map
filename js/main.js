@@ -10,6 +10,7 @@ import { buildExport, parseImport, ImportError } from './exportImport.js';
 import { applyMerge, planMerge } from './merge.js';
 import { nearestPlace } from './geo.js';
 import { buildTimeline } from './timeline.js';
+import { rampColor } from './ramp.js';
 import { filterPlaces, pruneFilter, tagStats } from './tags.js';
 import { ValidationError } from './validation.js';
 import { customSource, localSource, osmSource, probeSource, sourceLabel, styleFor, validateTileUrl } from './tiles.js';
@@ -213,6 +214,8 @@ function onTimelineChange(s) {
   state.timelineState = s;
   mapView.setVisibility(s.counts);
   mapView.setRoute(s.route);
+  const order = [...new Set(s.routeIds)]; // pins are coloured by when they were first visited
+  mapView.setPinColors(new Map(order.map((id, i) => [id, rampColor(order.length > 1 ? i / (order.length - 1) : 0)])));
   if (state.region) fitTimelineRegion();
 }
 
@@ -239,6 +242,7 @@ function leaveTimeline() {
   state.timeline = null;
   state.timelineState = null;
   mapView.setRoute([]);
+  mapView.setPinColors(null);
   applyMapFilter();
   mapView.leaveOverview();
 }
