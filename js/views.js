@@ -6,6 +6,9 @@ import { ratingDisplay, ratingInput } from './rating.js';
 import { latestVisit, sortVisits } from './schema.js';
 import { validatePlaceBase, validateVisitFields } from './validation.js';
 import { validateTileUrl } from './tiles.js';
+import { placeTags } from './tags.js';
+import { renderTagPicker } from './tagPicker.js';
+import { MAX_TAGS_PER_VISIT } from './tags.js';
 
 const formatCoords = (lat, lng) => `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -14,6 +17,8 @@ function setInvalid(input, message) {
   if (message) input.setAttribute('aria-invalid', 'true');
   else input.removeAttribute('aria-invalid');
 }
+
+const tagChips = (tags) => (tags.length ? h('p', { class: 'tag-list' }, tags.map((t) => h('span', { class: 'tag' }, t))) : null);
 
 const closeButton = (onClose, label = 'Close') =>
   h('button', { type: 'button', class: 'btn ghost close', onclick: onClose }, label);
@@ -40,6 +45,10 @@ export function renderList({ places, onSelect, onClose }) {
                 ratingDisplay(last.rating),
                 place.visits.length > 1 ? h('span', {}, plural(place.visits.length, 'visit')) : null,
               ),
+              placeTags(place).length
+                ? h('span', { class: 'place-row-tags' },
+                    placeTags(place).slice(0, 3).join(' · ') + (placeTags(place).length > 3 ? ` +${placeTags(place).length - 3}` : ''))
+                : null,
             ),
           ))),
   );
@@ -56,6 +65,7 @@ export function renderDetail({ place, onAddVisit, onEditPlace, onDeletePlace, on
     h('p', { class: 'place-date' },
       visits.length === 1 ? formatDate(visits[0].date) : `${plural(visits.length, 'visit')} · last ${formatDate(visits[0].date)}`),
     h('p', { class: 'coords' }, formatCoords(place.latitude, place.longitude)),
+    tagChips(placeTags(place)),
     h('div', { class: 'actions' },
       h('button', { type: 'button', class: 'btn primary', onclick: onAddVisit }, 'Add visit'),
       h('button', { type: 'button', class: 'btn', onclick: onEditPlace }, 'Edit place'),
@@ -69,6 +79,7 @@ export function renderDetail({ place, onAddVisit, onEditPlace, onDeletePlace, on
           ratingDisplay(v.rating),
         ),
         v.notes ? h('p', { class: 'place-notes' }, v.notes) : null,
+        tagChips(v.tags ?? []),
         h('div', { class: 'visit-actions' },
           h('button', { type: 'button', class: 'btn ghost small', onclick: () => onEditVisit(v) }, 'Edit'),
           canDeleteVisit ? h('button', { type: 'button', class: 'btn ghost small danger-text', onclick: () => onDeleteVisit(v) }, 'Delete') : null,
@@ -88,7 +99,7 @@ export function renderDetail({ place, onAddVisit, onEditPlace, onDeletePlace, on
  * onSave(values) resolves true on success; values holds only the shown sections' fields.
  * Returns { el, setCoords, focus }.
  */
-export function renderForm({ title, subtitle, show, initial = {}, coords, onSave, onCancel }) {
+export function renderForm({ title, subtitle, show, initial = {}, coords, tagStats = [], onSave, onCancel }) {
   let rating = initial.rating ?? null;
   let current = { latitude: coords?.latitude ?? 0, longitude: coords?.longitude ?? 0 };
 
@@ -102,6 +113,9 @@ export function renderForm({ title, subtitle, show, initial = {}, coords, onSave
   const errName = h('p', { class: 'field-error', id: 'e-name', role: 'alert' });
   const errDate = h('p', { class: 'field-error', id: 'e-date', role: 'alert' });
   const saveButton = h('button', { type: 'submit', class: 'btn primary' }, 'Save');
+  const tagPicker = show.visit
+    ? renderTagPicker({ selected: initial.tags ?? [], stats: tagStats, allowNew: true, label: 'Tags', placeholder: 'Add a tag', max: MAX_TAGS_PER_VISIT })
+    : null;
 
   const form = h('form', { class: 'view form', novalidate: true },
     h('header', { class: 'view-head' }, h('h2', {}, title)),
@@ -114,6 +128,11 @@ export function renderForm({ title, subtitle, show, initial = {}, coords, onSave
       ratingInput(rating, (v) => { rating = v; }),
     ) : null,
     show.visit ? h('div', { class: 'field' }, h('label', { for: 'f-notes' }, 'Notes (optional)'), notesInput) : null,
+    show.visit ? h('div', { class: 'field' },
+      h('span', { class: 'label' }, 'Tags (optional)'),
+      tagPicker.el,
+      h('p', { class: 'hint' }, 'Lowercase only. Examples: ramen, trip:japan-2026. Enter or comma adds a tag.'),
+    ) : null,
 
     show.place ? h('p', { class: 'coords-line' },
       h('span', { class: 'coords' }, coordsText),
@@ -136,7 +155,8 @@ export function renderForm({ title, subtitle, show, initial = {}, coords, onSave
       Object.assign(values, r.value);
     }
     if (show.visit) {
-      const r = validateVisitFields({ date: dateInput.value, rating, notes: notesInput.value });
+      tagPicker.commitPending(); // a tag typed but not yet entered still counts
+      const r = validateVisitFields({ date: dateInput.value, rating, notes: notesInput.value, tags: tagPicker.getTags() });
       Object.assign(errors, r.errors);
       Object.assign(values, r.value);
     }
@@ -279,70 +299,116 @@ export function renderSettings({
 /* ---------- timeline ---------- */
 
 /**
- * Slider over the dates of every visit. onChange(state) is called with timeline.stateAt(i).
+ * Slider over the dates of every (matching) visit, with an optional tag filter.
+ *   getModel(filter)   -> timeline model for that filter (see timeline.js)
+ *   filter             { tags, match }   remembered by the caller between openings
+ *   onFilterChange(f)  called whenever the user changes the filter
+ *   onChange(state)    called with { date, counts, onDate } whenever the slider moves
  * Returns { el, ready, destroy, showPlace }. Call ready() once mounted to apply the first state.
  */
-export function renderTimeline({ model, onChange, onClose }) {
-  const n = model.dates.length;
+export function renderTimeline({ getModel, stats, filter: initialFilter, onFilterChange, onChange, onClose }) {
+  let filter = { tags: [...initialFilter.tags], match: initialFilter.match };
+  let model = getModel(filter);
+  let index = 0;
+  let timer = null;
+  let playButton = null;
+
+  const body = h('div', { class: 'timeline-body' });
   const head = h('header', { class: 'view-head' }, h('h2', {}, 'Timeline'), closeButton(onClose));
 
-  if (n === 0) {
-    return {
-      el: h('section', { class: 'view' }, head,
-        h('div', { class: 'empty-inline' }, h('p', { class: 'strong' }, EMPTY_TITLE), h('p', {}, 'Pin a place and it will appear here.'))),
-      ready() {}, destroy() {}, showPlace() {},
-    };
-  }
-
-  let index = n - 1;
-  let timer = null;
-
-  const dateLabel = h('p', { class: 'timeline-date' });
-  const summary = h('p', { class: 'timeline-summary' });
-  const caption = h('p', { class: 'hint timeline-caption' });
-  const slider = h('input', {
-    type: 'range', min: '0', max: String(n - 1), step: '1', value: String(n - 1),
-    'aria-label': 'Date', disabled: n === 1,
+  /* --- tag filter --- */
+  const picker = renderTagPicker({
+    selected: filter.tags, stats, allowNew: false, label: 'Filter by tag', placeholder: 'Filter by tag',
+    onChange: (tags) => { filter = { ...filter, tags }; paintMatch(); refilter(); },
   });
-  const playButton = h('button', { type: 'button', class: 'btn primary', disabled: n === 1 }, 'Play');
-
-  function apply(i) {
-    index = i;
-    slider.value = String(i);
-    const state = model.stateAt(i);
-    dateLabel.textContent = formatDate(state.date);
-    slider.setAttribute('aria-valuetext', formatDate(state.date));
-    summary.textContent = `${state.counts.size} of ${plural(model.placeCount, 'place')}`;
-    caption.textContent = state.onDate.length ? state.onDate.map((p) => p.name).join(' · ') : '';
-    onChange(state);
+  const matchButtons = [['all', 'All of these'], ['any', 'Any of these']].map(([value, text]) =>
+    h('button', {
+      type: 'button', class: 'segment', role: 'radio', 'data-match': value,
+      onclick: () => { filter = { ...filter, match: value }; paintMatch(); refilter(); },
+    }, text));
+  const matchControl = h('div', { class: 'segments', role: 'radiogroup', 'aria-label': 'Match', hidden: true }, matchButtons);
+  function paintMatch() {
+    matchControl.hidden = filter.tags.length < 2;
+    for (const b of matchButtons) {
+      const on = b.dataset.match === filter.match;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    }
   }
+  paintMatch();
 
+  /* --- slider --- */
   function stop() {
     clearInterval(timer);
     timer = null;
-    playButton.textContent = 'Play';
+    if (playButton) playButton.textContent = 'Play';
   }
 
-  function play() {
-    if (index >= n - 1) apply(0);
-    playButton.textContent = 'Pause';
-    const stepMs = Math.max(250, Math.min(1200, Math.round(12000 / n)));
-    timer = setInterval(() => {
-      if (index >= n - 1) { stop(); return; }
-      apply(index + 1);
-    }, stepMs);
+  function buildBody() {
+    stop();
+    const n = model.dates.length;
+    if (n === 0) {
+      body.replaceChildren(h('div', { class: 'empty-inline' },
+        h('p', { class: 'strong' }, filter.tags.length ? 'No visits match these tags.' : EMPTY_TITLE),
+        h('p', {}, filter.tags.length ? 'Try fewer tags, or switch to “Any of these”.' : 'Pin a place and it will appear here.')));
+      playButton = null;
+      return { n, apply: () => onChange({ date: null, counts: new Map(), onDate: [] }) };
+    }
+
+    const dateLabel = h('p', { class: 'timeline-date' });
+    const summary = h('p', { class: 'timeline-summary' });
+    const caption = h('p', { class: 'hint timeline-caption' });
+    const slider = h('input', {
+      type: 'range', min: '0', max: String(n - 1), step: '1', value: String(n - 1),
+      'aria-label': 'Date', disabled: n === 1,
+    });
+    playButton = h('button', { type: 'button', class: 'btn primary', disabled: n === 1 }, 'Play');
+
+    function apply(i) {
+      index = i;
+      slider.value = String(i);
+      const state = model.stateAt(i);
+      dateLabel.textContent = formatDate(state.date);
+      slider.setAttribute('aria-valuetext', formatDate(state.date));
+      summary.textContent = `${state.counts.size} of ${plural(model.placeCount, 'place')}`;
+      caption.textContent = state.onDate.length ? state.onDate.map((p) => p.name).join(' · ') : '';
+      onChange(state);
+    }
+
+    function play() {
+      if (index >= n - 1) apply(0);
+      playButton.textContent = 'Pause';
+      const stepMs = Math.max(250, Math.min(1200, Math.round(12000 / n)));
+      timer = setInterval(() => {
+        if (index >= n - 1) { stop(); return; }
+        apply(index + 1);
+      }, stepMs);
+    }
+
+    slider.addEventListener('input', () => { stop(); apply(Number(slider.value)); });
+    playButton.addEventListener('click', () => (timer ? stop() : play()));
+    body.replaceChildren(dateLabel, summary, slider, h('div', { class: 'actions' }, playButton), caption);
+    index = n - 1;
+    return { n, apply: () => apply(n - 1), caption };
   }
 
-  slider.addEventListener('input', () => { stop(); apply(Number(slider.value)); });
-  playButton.addEventListener('click', () => (timer ? stop() : play()));
+  let current = buildBody();
+
+  function refilter() {
+    onFilterChange({ tags: [...filter.tags], match: filter.match });
+    model = getModel(filter);
+    current = buildBody();
+    current.apply();
+  }
 
   return {
-    el: h('section', { class: 'view timeline' }, head, dateLabel, summary, slider,
-      h('div', { class: 'actions' }, playButton), caption),
-    ready() { apply(index); },
+    el: h('section', { class: 'view timeline' }, head,
+      h('div', { class: 'timeline-filter' }, picker.el, matchControl), body),
+    ready() { current.apply(); },
     destroy: stop,
-    showPlace(place) {
-      caption.textContent = `${place.name} · ${plural(place.visits.length, 'visit')}`;
+    showPlace(id) {
+      const place = model.places.find((p) => p.id === id);
+      if (place && current.caption) current.caption.textContent = `${place.name} · ${plural(place.visits.length, 'visit')}`;
     },
   };
 }

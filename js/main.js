@@ -10,8 +10,9 @@ import { buildExport, parseImport, ImportError } from './exportImport.js';
 import { applyMerge, planMerge } from './merge.js';
 import { nearestPlace } from './geo.js';
 import { buildTimeline } from './timeline.js';
+import { pruneFilter, tagStats } from './tags.js';
 import { ValidationError } from './validation.js';
-import { customSource, localSource, osmSource, probeSource, sourceLabel, validateTileUrl } from './tiles.js';
+import { customSource, localSource, osmSource, probeSource, sourceLabel, styleFor, validateTileUrl } from './tiles.js';
 import { createMapFileStore } from './mapFiles.js';
 import { MapFileError } from './pmtilesHeader.js';
 import { localMapsSupported, registerLocalFiles } from './localMaps.js';
@@ -40,8 +41,8 @@ const mapFiles = createMapFileStore();
 const state = {
   view: 'none', selectedId: null,
   form: null, formCtx: null, draft: null,
-  timeline: null,
-  tileSource: null, tileErrors: 0, checkingTiles: false,
+  timeline: null, tagFilter: { tags: [], match: 'all' },
+  tileSource: null, styleKey: null, tileErrors: 0, checkingTiles: false,
   online: null, // the online map in use (OpenStreetMap or your server), or null when offline files are used alone
   mapMetas: [], localFiles: [], // offline map files: stored descriptions / registered with the map
 };
@@ -152,9 +153,13 @@ function renderPanel() {
       }));
       break;
     case 'timeline': {
-      const model = buildTimeline(store.places);
+      const stats = tagStats(store.places);
+      state.tagFilter = pruneFilter(state.tagFilter, stats); // a tag nobody uses any more drops out of the filter
       state.timeline = renderTimeline({
-        model,
+        getModel: (filter) => buildTimeline(store.places, filter),
+        stats,
+        filter: state.tagFilter,
+        onFilterChange: (filter) => { state.tagFilter = filter; },
         onChange: (s) => mapView.setVisibility(s.counts),
         onClose: () => setView('none'),
       });
@@ -191,7 +196,7 @@ function leaveTimeline() {
 
 function onPlaceClick(id) {
   if (state.view === 'form') return;
-  if (state.view === 'timeline') { state.timeline?.showPlace(store.get(id)); return; }
+  if (state.view === 'timeline') { state.timeline?.showPlace(id); return; }
   selectPlace(id);
 }
 
@@ -227,7 +232,7 @@ function openForm(mode, { place, visit, latitude, longitude, zoom } = {}) {
   }[mode];
 
   state.formCtx = { mode, placeId: place?.id ?? null, visitId: visit?.id ?? null };
-  state.form = renderForm({ ...config, coords: state.draft, onSave: saveForm, onCancel: () => endForm() });
+  state.form = renderForm({ ...config, coords: state.draft, tagStats: tagStats(store.places), onSave: saveForm, onCancel: () => endForm() });
   state.selectedId = hasPin ? null : place.id;
   mapView.setSelected(state.selectedId);
   mapView.setPlaces(visiblePlaces());
@@ -252,7 +257,7 @@ function endForm() {
 
 async function saveForm(values) {
   const ctx = state.formCtx;
-  const visit = { date: values.date, rating: values.rating, notes: values.notes };
+  const visit = { date: values.date, rating: values.rating, notes: values.notes, tags: values.tags };
   const base = { name: values.name, latitude: values.latitude, longitude: values.longitude };
   try {
     switch (ctx.mode) {
@@ -498,7 +503,12 @@ async function addFromFile(incoming) {
 function useSource(source) {
   state.tileSource = source;
   state.tileErrors = 0;
-  mapView.setTileSource(source);
+  // Applying a style reloads every tile, so skip it when nothing about the map would change.
+  const key = JSON.stringify(styleFor(source));
+  if (key !== state.styleKey) {
+    state.styleKey = key;
+    mapView.setTileSource(source);
+  }
   if (state.view === 'settings') renderPanel();
 }
 
@@ -684,7 +694,8 @@ $('#empty .text').textContent = EMPTY_TEXT;
 
 async function start() {
   setView('none');
-  const tiles = loadLocalFiles().then(setupTiles); // runs alongside loading saved places
+  // Order matters: put the camera where the saved places are BEFORE choosing the map, so the
+  // map never requests tiles for a default world view that is immediately thrown away.
   try {
     await store.load();
     mapView.fitToPlaces(store.places);
@@ -693,7 +704,8 @@ async function start() {
     toast("Couldn't open saved places on this device. Private windows can block storage.", 8000);
   }
   updateEmpty();
-  await tiles;
+  await loadLocalFiles();
+  await setupTiles();
 }
 
 start();

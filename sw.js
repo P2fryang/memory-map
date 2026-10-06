@@ -8,7 +8,7 @@
 //
 // To ship an app update: change VERSION. Old app caches are deleted on activate.
 // (The tile cache has its own name, so updates don't throw your cached tiles away.)
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `places-map-${VERSION}`;
 const TILE_CACHE = 'tiles-places-map';
 
@@ -44,6 +44,8 @@ const SHELL = [
   './js/schema.js',
   './js/settings.js',
   './js/store.js',
+  './js/tagPicker.js',
+  './js/tags.js',
   './js/tiles.js',
   './js/timeline.js',
   './js/toast.js',

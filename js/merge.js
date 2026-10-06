@@ -12,7 +12,7 @@ import { sortVisits } from './schema.js';
 
 export const RESOLUTIONS = ['merge', 'mine', 'theirs'];
 
-const visitKey = (v) => JSON.stringify([v.date, v.rating ?? null, v.notes ?? '', v.photos ?? []]);
+const visitKey = (v) => JSON.stringify([v.date, v.rating ?? null, v.notes ?? '', v.photos ?? [], [...(v.tags ?? [])].sort()]);
 const sameVisit = (a, b) => visitKey(a) === visitKey(b);
 const stamp = (iso) => Date.parse(iso) || 0;
 

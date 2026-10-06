@@ -19,7 +19,7 @@ Geolocation works on `localhost` and on HTTPS sites only.
 
 All paths are relative, so it works under the `/<repo>/` sub-path. **Shipping an update:** change `VERSION` in `sw.js`.
 
-## How the data works (schema v2)
+## How the data works (schema v3)
 
 A **place** is a location (name + coordinates) with one or more **visits** (date, rating, notes, photo URLs).
 Revisiting adds a visit to the same place, so it stays a single selectable pin (a badge shows the visit count).
@@ -28,6 +28,25 @@ Pinning within ~75 m of a saved place offers "Add a visit" instead of creating a
 Version-1 data (the first MVP) is upgraded automatically: local data on load, and v1 export files on import.
 Each old pin becomes a place with one visit; the visit id is derived from the place id, so re-importing an
 old export into already-upgraded data recognises it as identical instead of duplicating it.
+
+## Tags
+
+Optional, on each **visit**; a place shows the union of its visits' tags (so a place can be `ramen` from one visit and
+`trip:japan-2026` from another). Tags are **lowercase only**: whatever you type is lowercased, spaces become hyphens, and
+anything other than letters, numbers, `-`, `_` and `:` is dropped (`#Trip 2026!` becomes `trip-2026`). Up to 12 tags per
+visit, 30 characters each. Enter or comma adds a tag; text typed but not yet entered is kept when you press Save.
+The `type:value` form (`trip:japan-2026`, `type:ramen`) is just a naming convention for now, but it leaves room to group
+tags into classes later without changing any saved data.
+
+The dropdown always offers the **three most-used tags** you haven't picked yet (ranked by number of visits, then number
+of places, then alphabetically); type to search the rest. There is no separate tag list to maintain: the list of tags is
+computed from the visits, so a tag nobody uses simply stops existing the moment its last visit is deleted or edited,
+including in an active filter.
+
+**Timeline filter:** pick as many tags as you like, then choose *All of these* (visits having every tag) or *Any of these*.
+Only matching visits count: slider dates, the "N of M places" line and the pin badges all follow the filter.
+
+Export files are now **version 3** (older apps will refuse them rather than silently dropping tags); v1 and v2 files still import.
 
 ## Import: Add or Replace
 
@@ -98,7 +117,8 @@ stays still while it plays, so it loads few tiles.
       repository.js    IndexedDB (the only file that touches it)
       schema.js        data shape + v1->v2 migration     validation.js  field rules
       exportImport.js  versioned JSON export/import       merge.js       "Add" import planning + resolution
-      timeline.js      timeline state by date             geo.js         distance / nearby lookup
+      timeline.js      timeline state by date (+ tag filter)   geo.js     distance / nearby lookup
+      tags.js          tag rules, usage ranking, filtering   tagPicker.js  the tag entry/filter control
       mapView.js       MapLibre adapter (only file that touches the map library)
       tiles.js         tile sources, style building (online + offline layering), reachability probe
       mapFiles.js      stores .pmtiles files on the device     pmtilesHeader.js  reads/validates a file's header

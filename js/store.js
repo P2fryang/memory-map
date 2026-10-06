@@ -85,7 +85,7 @@ export function createStore(repo) {
       const clean = assertValidVisitFields(fields);
       const now = new Date().toISOString();
       const next = { ...old, ...clean, updatedAt: now };
-      for (const key of ['rating', 'notes']) if (!(key in clean)) delete next[key]; // user cleared it
+      for (const key of ['rating', 'notes', 'tags']) if (!(key in clean)) delete next[key]; // user cleared it
       return save({ ...existing, visits: existing.visits.map((v) => (v.id === visitId ? next : v)), updatedAt: now });
     },
 

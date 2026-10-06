@@ -21,6 +21,9 @@ const migrations = {
     version: 2,
     places: Array.isArray(data.places) ? data.places.map(migratePlaceV1) : data.places,
   }),
+  // v3 added optional tags on visits. Nothing to convert; the bump makes older apps refuse the
+  // file instead of silently dropping the tags.
+  2: (data) => ({ ...data, version: 3 }),
 };
 
 /** Builds the object that gets written to the export file. */

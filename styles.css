@@ -272,3 +272,43 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .file-name { overflow-wrap: anywhere; }
 .check { display: flex; gap: 10px; align-items: center; min-height: 48px; margin-top: 12px; font-weight: 600; }
 .check input { width: 22px; height: 22px; accent-color: var(--lagoon); flex: none; }
+
+/* ---------- tags ---------- */
+.tag {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px;
+  font: 600 .85rem/1 var(--sans); color: var(--lagoon-dark);
+  background: #e0edf3; border: 0; border-radius: 14px;
+}
+.tag-removable { min-height: 36px; font-size: .9rem; cursor: pointer; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.visit-list .tag-list { margin-top: 6px; }
+.place-row-tags { display: block; font-size: .85rem; color: var(--lagoon-dark); }
+
+.tag-picker { display: grid; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tag-chips:empty { display: none; }
+.tag-row { display: flex; gap: 8px; }
+.tag-input { flex: 1; width: auto; min-width: 0; text-transform: lowercase; }
+.tag-toggle { min-width: 52px; min-height: 48px; }
+.tag-menu {
+  list-style: none; margin: 6px 0 0; padding: 4px;
+  background: var(--paper); border: 1.5px solid var(--line); border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(22, 37, 43, .18);
+}
+.tag-menu-heading { padding: 6px 10px 2px; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.tag-menu-note { padding: 8px 10px; }
+.tag-option {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  width: 100%; min-height: 44px; padding: 0 10px;
+  font: inherit; color: inherit; text-align: left;
+  background: none; border: 0; border-radius: 8px; cursor: pointer;
+}
+.tag-option:hover { background: var(--fog); }
+.tag-new { font-weight: 600; color: var(--lagoon-dark); }
+
+.timeline-filter { margin-top: 8px; }
+.timeline-body { margin-top: 4px; }
+.segments { display: flex; margin-top: 8px; border: 1.5px solid var(--line); border-radius: 10px; overflow: hidden; }
+.segment { flex: 1; min-height: 44px; font: inherit; font-weight: 600; color: var(--ink); background: var(--paper); border: 0; cursor: pointer; }
+.segment + .segment { border-left: 1.5px solid var(--line); }
+.segment.on { color: #fff; background: var(--lagoon); }

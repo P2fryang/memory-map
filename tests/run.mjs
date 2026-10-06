@@ -12,6 +12,7 @@ import { distanceMeters, nearestPlace } from '../js/geo.js';
 import { validateTileUrl, styleFor, osmSource, customSource, localSource, localStyle, sourceLabel } from '../js/tiles.js';
 import { parseHeader, MapFileError } from '../js/pmtilesHeader.js';
 import { keyFor } from '../js/localMaps.js';
+import { normalizeTag, normalizeTags, placeTags, tagStats, topTags, matchesTags, filterPlaces, pruneFilter } from '../js/tags.js';
 
 let passed = 0;
 async function test(name, fn) {
@@ -147,14 +148,14 @@ await test('export (v2) -> import round-trips', async () => {
   await store.addVisit(p.id, { date: '2026-11-01', rating: 2 });
   await newPlace(store, { name: 'Other' });
   const exported = JSON.parse(JSON.stringify(buildExport(store.places)));
-  assert.equal(exported.version, 2);
+  assert.equal(exported.version, 3);
   const { places } = parseImport(JSON.stringify(exported));
   assert.deepEqual(places.map((x) => x.id), store.places.map((x) => x.id));
   assert.equal(places[0].visits.length, 2);
 });
 await test('import accepts an OLD version-1 export from the first MVP and upgrades it', () => {
   const { version, places } = parseImport(JSON.stringify({ version: 1, places: [v1] }));
-  assert.equal(version, 2);
+  assert.equal(version, 3);
   assert.equal(places[0].visits[0].id, 'abc123:v1');
   assert.equal(places[0].visits[0].rating, 5);
 });
@@ -347,6 +348,100 @@ await test('source labels and map-file keys', () => {
   assert.equal(sourceLabel(localSource([world], null)), 'your offline map files only');
   assert.match(sourceLabel(localSource([world], osmSource())), /offline map files, with OpenStreetMap/);
   assert.equal(keyFor('My Map (v2).pmtiles'), 'local-My_Map__v2_.pmtiles');
+});
+
+/* ---------- tags ---------- */
+const tagged = (id, tags, date = '2026-01-01') => visit(id, date, tags ? { tags } : {});
+
+await test('tags: normalised to lowercase words; junk removed; empties dropped', () => {
+  assert.equal(normalizeTag('  #Trip:Japan 2026! '), 'trip:japan-2026');
+  assert.equal(normalizeTag('RAMEN'), 'ramen');
+  assert.equal(normalizeTag('very   long   words'), 'very-long-words');
+  assert.equal(normalizeTag('--:x:--'), 'x');
+  assert.equal(normalizeTag('日本'), '日本'); // not Latin: kept
+  assert.equal(normalizeTag('!!!'), '');
+  assert.equal(normalizeTag(5), '');
+  assert.deepEqual(normalizeTags(['Ramen', 'ramen', ' RAMEN ', '', 'sushi']), ['ramen', 'sushi']);
+});
+await test('tags: validation normalises, limits length and count, omits when empty', () => {
+  assert.deepEqual(validateVisitFields({ date: '2026-01-01', tags: ['Ramen', 'ramen', 'Trip 1'] }).value.tags, ['ramen', 'trip-1']);
+  assert.equal('tags' in validateVisitFields({ date: '2026-01-01', tags: [] }).value, false);
+  assert.equal('tags' in validateVisitFields({ date: '2026-01-01', tags: ['!!!'] }).value, false);
+  assert.ok(validateVisitFields({ date: '2026-01-01', tags: ['x'.repeat(31)] }).errors.tags);
+  assert.ok(validateVisitFields({ date: '2026-01-01', tags: Array.from({ length: 13 }, (_, i) => `t${i}`) }).errors.tags);
+  assert.ok(validateVisitFields({ date: '2026-01-01', tags: 'ramen' }).errors.tags);
+  assert.ok(validateVisitFields({ date: '2026-01-01', tags: [1] }).errors.tags);
+});
+
+const A = place('a', 'A', [tagged('a1', ['ramen', 'trip:japan']), tagged('a2', ['ramen'], '2026-02-01'), tagged('a3', null, '2026-03-01')]);
+const B = place('b', 'B', [tagged('b1', ['ramen', 'sushi', 'food']), tagged('b2', ['sushi'], '2026-02-02')]);
+const C = place('c', 'C', [tagged('c1', ['trip:japan'], '2026-04-01')]);
+
+await test('tags: place tags are the union of its visits; stats rank by visits, then places, then name', () => {
+  assert.deepEqual(placeTags(A), ['ramen', 'trip:japan']);
+  assert.deepEqual(placeTags(place('x', 'X', [tagged('x1', null)])), []);
+  const stats = tagStats([A, B, C]);
+  assert.deepEqual(stats.map((s) => [s.tag, s.visits, s.places]), [
+    ['ramen', 3, 2], ['trip:japan', 2, 2], ['sushi', 2, 1], ['food', 1, 1], // equal visits: more places ranks first
+  ]);
+  assert.deepEqual(topTags(stats).map((s) => s.tag), ['ramen', 'trip:japan', 'sushi']); // top three
+  assert.deepEqual(topTags(stats, 3, ['ramen']).map((s) => s.tag), ['trip:japan', 'sushi', 'food']); // selected ones don't take a slot
+});
+await test('tags: a tag nobody uses disappears (the list is derived from the visits)', () => {
+  assert.ok(tagStats([A, B, C]).some((s) => s.tag === 'food'));
+  const withoutFood = { ...B, visits: [tagged('b1', ['ramen', 'sushi']), B.visits[1]] }; // the only visit with "food" was edited
+  assert.equal(tagStats([A, withoutFood, C]).some((s) => s.tag === 'food'), false);
+  assert.deepEqual(tagStats([]), []);
+  assert.deepEqual(pruneFilter({ tags: ['food', 'ramen'], match: 'all' }, tagStats([A, withoutFood, C])), { tags: ['ramen'], match: 'all' });
+});
+await test('tags: filtering by several tags, all or any', () => {
+  const v = tagged('v', ['ramen', 'sushi']);
+  assert.equal(matchesTags(v, [], 'all'), true);
+  assert.equal(matchesTags(v, ['ramen', 'sushi'], 'all'), true);
+  assert.equal(matchesTags(v, ['ramen', 'food'], 'all'), false);
+  assert.equal(matchesTags(v, ['ramen', 'food'], 'any'), true);
+  assert.equal(matchesTags(tagged('u', null), ['ramen'], 'any'), false);
+  const all = filterPlaces([A, B, C], { tags: ['ramen', 'sushi'], match: 'all' });
+  assert.deepEqual(all.map((p) => [p.id, p.visits.map((x) => x.id)]), [['b', ['b1']]]);
+  const any = filterPlaces([A, B, C], { tags: ['ramen', 'sushi'], match: 'any' });
+  assert.deepEqual(any.map((p) => [p.id, p.visits.length]), [['a', 2], ['b', 2]]);
+  assert.equal(filterPlaces([A], { tags: [], match: 'all' })[0], A); // no filter: untouched
+});
+await test('timeline with a tag filter counts only matching visits and dates', () => {
+  const t = buildTimeline([A, B, C], { tags: ['ramen'], match: 'all' });
+  assert.deepEqual(t.dates, ['2026-01-01', '2026-02-01']); // a3 / b2 / c1 don't match, so their dates are skipped
+  assert.equal(t.placeCount, 2);
+  assert.deepEqual([...t.stateAt(1).counts], [['a', 2], ['b', 1]]);
+  assert.equal(buildTimeline([A], { tags: ['nothing'], match: 'all' }).dates.length, 0);
+  assert.equal(buildTimeline([A, B, C]).placeCount, 3); // no filter: as before
+});
+await test('tags: stored via the store, cleared on edit, and part of export/import', async () => {
+  const store = createStore(memoryRepo());
+  const p = await store.addPlace({ ...base, visit: { date: '2026-10-04', tags: ['Ramen', 'trip:japan'] } });
+  assert.deepEqual(p.visits[0].tags, ['ramen', 'trip:japan']);
+  const edited = await store.updateVisit(p.id, p.visits[0].id, { date: '2026-10-04' }); // user removed every tag
+  assert.equal('tags' in edited.visits[0], false);
+  const again = await store.updateVisit(p.id, p.visits[0].id, { date: '2026-10-04', tags: ['sushi'] });
+  const { places, version } = parseImport(JSON.stringify(JSON.parse(JSON.stringify(buildExport([again])))));
+  assert.equal(version, 3);
+  assert.deepEqual(places[0].visits[0].tags, ['sushi']);
+});
+await test('import: tags in a file are normalised; a v2 file (no tags) still imports as v3', () => {
+  const file = { version: 3, places: [place('x', 'X', [{ ...visit('x1', '2026-01-01'), tags: ['Ramen', ' Trip 1 '] }])] };
+  assert.deepEqual(parseImport(JSON.stringify(file)).places[0].visits[0].tags, ['ramen', 'trip-1']);
+  const v2 = parseImport(JSON.stringify({ version: 2, places: [place('y', 'Y', [visit('y1', '2026-01-01')])] }));
+  assert.equal(v2.version, 3);
+  assert.equal('tags' in v2.places[0].visits[0], false);
+  assert.throws(() => parseImport(JSON.stringify({ version: 4, places: [] })), /newer version/);
+});
+await test('merge: a visit whose only difference is its tags is a conflict (not silently "identical")', () => {
+  const mineP = place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['ramen'] })]);
+  const theirs = place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['ramen', 'trip:japan'] })]);
+  assert.equal(planMerge([mineP], [theirs]).conflicts.length, 1);
+  assert.equal(planMerge([mineP], [structuredClone(mineP)]).identical, 1);
+  const sameDifferentOrder = place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['ramen'] })]);
+  assert.equal(planMerge([place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['a', 'b'] })])], [place('p1', 'Ramen', [visit('v1', '2026-01-10', { tags: ['b', 'a'] })])]).identical, 1);
+  assert.equal(planMerge([mineP], [sameDifferentOrder]).identical, 1);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', with failures' : ''}`);

@@ -3,7 +3,9 @@
 // v1: one record per pin, with date/rating/notes/photos on the place itself.
 // v2: one record per LOCATION, with a list of visits (each with its own date/rating/notes/photos).
 //
-// @typedef {Object} Visit  { id, date, rating?, notes?, photos?, createdAt, updatedAt }
+// v3: visits may also carry tags (lowercase strings). Optional, so v2 data needs no conversion.
+//
+// @typedef {Object} Visit  { id, date, rating?, notes?, tags?, photos?, createdAt, updatedAt }
 // @typedef {Object} Place  { id, name, latitude, longitude, visits: Visit[], createdAt, updatedAt }
 
 export const isLegacyPlace = (p) =>

@@ -1,7 +1,7 @@
 // App-wide constants.
 
 /** Schema version written to (and required in) exported JSON files. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * Optional: bake your own tile server into the app so every device uses it by default.

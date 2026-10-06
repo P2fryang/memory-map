@@ -1,4 +1,5 @@
 import { isValidDateString } from './dates.js';
+import { MAX_TAGS_PER_VISIT, MAX_TAG_LENGTH, normalizeTags } from './tags.js';
 
 export class ValidationError extends Error {
   constructor(message, errors = {}) {
@@ -28,7 +29,7 @@ export function validatePlaceBase(input) {
   return { errors, value: { name, latitude, longitude } };
 }
 
-/** Date, rating, notes, photos: the fields that belong to one visit. Returns { errors, value }. */
+/** Date, rating, notes, tags, photos: the fields that belong to one visit. Returns { errors, value }. */
 export function validateVisitFields(input) {
   const errors = {};
   const src = input ?? {};
@@ -56,9 +57,22 @@ export function validateVisitFields(input) {
     }
   }
 
+  let tags;
+  if (!isBlank(src.tags)) {
+    if (!Array.isArray(src.tags) || !src.tags.every((t) => typeof t === 'string')) {
+      errors.tags = 'Tags must be a list of words.';
+    } else {
+      const list = normalizeTags(src.tags);
+      if (list.some((t) => [...t].length > MAX_TAG_LENGTH)) errors.tags = `Tags can be at most ${MAX_TAG_LENGTH} characters.`;
+      else if (list.length > MAX_TAGS_PER_VISIT) errors.tags = `A visit can have at most ${MAX_TAGS_PER_VISIT} tags.`;
+      else if (list.length) tags = list;
+    }
+  }
+
   const value = { date: src.date };
   if (rating !== undefined) value.rating = rating;
   if (notes !== undefined) value.notes = notes;
+  if (tags !== undefined) value.tags = tags;
   if (photos !== undefined) value.photos = photos;
   return { errors, value };
 }
