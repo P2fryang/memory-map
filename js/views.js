@@ -28,14 +28,14 @@ export const EMPTY_TEXT = "Pin somewhere you've been to start building your pers
 
 /* ---------- tag filter (Places list and timeline) ---------- */
 
-/** Tag picker plus an All/Any switch (shown once two tags are picked). onChange({ tags, match }). */
+/** Tag picker plus an All/Any/None switch (shown once a tag is picked). onChange({ tags, match }). */
 function renderTagFilter({ stats, filter: initial, onChange }) {
   let filter = { tags: [...initial.tags], match: initial.match };
   const picker = renderTagPicker({
     selected: filter.tags, stats, allowNew: false, label: 'Filter by tag', placeholder: 'Filter by tag',
     onChange: (tags) => { filter = { ...filter, tags }; paint(); emit(); },
   });
-  const buttons = [['all', 'All of these'], ['any', 'Any of these']].map(([value, text]) =>
+  const buttons = [['all', 'All of these'], ['any', 'Any of these'], ['none', 'None of these']].map(([value, text]) =>
     h('button', {
       type: 'button', class: 'segment', role: 'radio', 'data-match': value,
       onclick: () => { filter = { ...filter, match: value }; paint(); emit(); },
@@ -44,7 +44,7 @@ function renderTagFilter({ stats, filter: initial, onChange }) {
 
   function emit() { onChange({ tags: [...filter.tags], match: filter.match }); }
   function paint() {
-    control.hidden = filter.tags.length < 2;
+    control.hidden = filter.tags.length < 1;
     for (const b of buttons) {
       const on = b.dataset.match === filter.match;
       b.classList.toggle('on', on);

@@ -52,7 +52,7 @@ of places, then alphabetically); type to search the rest. There is no separate t
 computed from the visits, so a tag nobody uses simply stops existing the moment its last visit is deleted or edited,
 including in an active filter.
 
-**Timeline filter:** pick as many tags as you like, then choose *All of these* (visits having every tag) or *Any of these*.
+**Timeline filter:** pick as many tags as you like, then choose *All of these* (visits having every tag), *Any of these*, or *None of these* (visits having none of them, including untagged visits).
 Only matching visits count: slider dates, the "N of M places" line and the pin badges all follow the filter.
 
 **Filter on the map and the Places list:** the same filter (tags + All/Any) is available in the Places list and the timeline, and it is

@@ -438,6 +438,11 @@ await test('tags: filtering by several tags, all or any', () => {
   assert.equal(matchesTags(v, ['ramen', 'food'], 'all'), false);
   assert.equal(matchesTags(v, ['ramen', 'food'], 'any'), true);
   assert.equal(matchesTags(tagged('u', null), ['ramen'], 'any'), false);
+  assert.equal(matchesTags(v, ['food', 'trip:japan'], 'none'), true);
+  assert.equal(matchesTags(v, ['food', 'ramen'], 'none'), false);
+  assert.equal(matchesTags(tagged('u', null), ['ramen'], 'none'), true); // untagged visits are "none of these"
+  assert.equal(matchesTags(v, [], 'none'), true); // no tags picked: no filter
+  assert.deepEqual(filterPlaces([A, B, C], { tags: ['ramen'], match: 'none' }).map((p) => [p.id, p.visits.map((x) => x.id)]), [['a', ['a3']], ['b', ['b2']], ['c', ['c1']]]);
   const all = filterPlaces([A, B, C], { tags: ['ramen', 'sushi'], match: 'all' });
   assert.deepEqual(all.map((p) => [p.id, p.visits.map((x) => x.id)]), [['b', ['b1']]]);
   const any = filterPlaces([A, B, C], { tags: ['ramen', 'sushi'], match: 'any' });

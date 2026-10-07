@@ -61,10 +61,11 @@ export function tagStats(places) {
 /** The n most-used tags from `stats`, skipping any in `exclude`. */
 export const topTags = (stats, n = 3, exclude = []) => stats.filter((s) => !exclude.includes(s.tag)).slice(0, n);
 
-/** Does a visit match the selected tags? match: 'all' (every tag) or 'any' (at least one). */
+/** Does a visit match the selected tags? match: 'all' (every tag), 'any' (at least one) or 'none' (not one of them). */
 export function matchesTags(visit, tags, match = 'all') {
   if (!tags.length) return true;
   const have = visitTags(visit);
+  if (match === 'none') return !tags.some((t) => have.includes(t));
   return match === 'any' ? tags.some((t) => have.includes(t)) : tags.every((t) => have.includes(t));
 }
 
