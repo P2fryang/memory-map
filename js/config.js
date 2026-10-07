@@ -27,10 +27,11 @@ export const DEFAULT_VIEW = { center: [10, 25], zoom: 1.6 };
 export const TIMELINE_ZOOM = { minZoom: 1, maxZoom: 8 };
 
 /**
- * Timeline option "Zoom in on the pins shown": the zoom range widens to this, and the camera fits the pins shown
- * so far, but never closer than fitMaxZoom (roughly a region).
+ * Timeline option "Zoom in on the pins shown": the zoom range widens to this and the camera fits the pins shown so far.
+ * Defaults (changeable in the timeline options): several pins zoom as close as still shows them all (fitMaxZoom is the
+ * cap), a single pin goes to singleZoom (about region level).
  */
-export const TIMELINE_REGION = { minZoom: 1, maxZoom: 12, fitMaxZoom: 10 };
+export const TIMELINE_REGION = { minZoom: 1, maxZoom: 18, fitMaxZoom: 18, singleZoom: 10 };
 
 /** A new pin this close to a saved place offers "add a visit" instead of a duplicate place. */
 export const NEARBY_METERS = 75;

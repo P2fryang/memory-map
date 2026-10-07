@@ -7,16 +7,16 @@
 //   setSelected(id | null)        highlight one marker
 //   setDraft(lat, lng) / clearDraft()   the draggable "new place" pin
 //   flyTo(lat, lng, {zoom, minZoom})
-//   fitToPlaces(places, {maxZoom})
+//   fitToPlaces(places, {maxZoom, singleZoom})
 //   enterOverview(places, {minZoom, maxZoom}) / leaveOverview()   low-detail whole-world view
 //   setZoomLimits({minZoom, maxZoom})   change the zoom range while in the overview
-//   setRoute([[lng, lat], ...])   the timeline's line through the pins, in order (empty clears it)
+//   setRoute([[lng, lat], ...], colours)   the timeline's line through the pins, in order (empty clears it)
 //   setPinColors(Map(id -> colour) | null)   timeline: colour pins by age (null restores the default)
 //
 // Callbacks: onMapClick(lat, lng), onPlaceClick(id), onDraftMove(lat, lng),
 // onTileError(), getPadding() -> {top,right,bottom,left}.
 import { DEFAULT_VIEW } from './config.js';
-import { RAMP } from './ramp.js';
+import { DEFAULT_RAMP } from './ramp.js';
 import { BLANK_STYLE, styleFor } from './tiles.js';
 
 const PIN_SVG =
@@ -78,6 +78,10 @@ export function createMapView(container, handlers) {
 
   // The route is a map layer, and a layer vanishes whenever the style is replaced, so it is redrawn on style.load.
   let route = [];
+  let routeColors = DEFAULT_RAMP;
+  let paintedColors = '';
+  const gradient = (colors) =>
+    ['interpolate', ['linear'], ['line-progress'], ...colors.flatMap((color, i) => [i / (colors.length - 1), color])];
   const paintRoute = () => {
     const data = {
       type: 'FeatureCollection',
@@ -85,7 +89,14 @@ export function createMapView(container, handlers) {
     };
     try {
       const source = map.getSource('route');
-      if (source) { source.setData(data); return; }
+      if (source) {
+        source.setData(data);
+        if (routeColors.join() !== paintedColors) {
+          map.setPaintProperty('route', 'line-gradient', gradient(routeColors));
+          paintedColors = routeColors.join();
+        }
+        return;
+      }
       map.addSource('route', { type: 'geojson', data, lineMetrics: true }); // lineMetrics enables the gradient
       map.addLayer({
         id: 'route', type: 'line', source: 'route',
@@ -93,9 +104,10 @@ export function createMapView(container, handlers) {
         paint: {
           'line-width': 3,
           'line-opacity': 0.85,
-          'line-gradient': ['interpolate', ['linear'], ['line-progress'], ...RAMP.flatMap((color, i) => [i / (RAMP.length - 1), color])],
+          'line-gradient': gradient(routeColors),
         },
       });
+      paintedColors = routeColors.join();
     } catch { /* style still loading; style.load paints it */ }
   };
   map.on('style.load', paintRoute);
@@ -189,10 +201,10 @@ export function createMapView(container, handlers) {
       });
     },
 
-    fitToPlaces(places, { maxZoom = 14 } = {}) {
+    fitToPlaces(places, { maxZoom = 14, singleZoom = 13 } = {}) {
       if (places.length === 0) return;
       if (places.length === 1) {
-        map.jumpTo({ center: [places[0].longitude, places[0].latitude], zoom: Math.min(13, maxZoom), padding: handlers.getPadding() });
+        map.jumpTo({ center: [places[0].longitude, places[0].latitude], zoom: Math.min(singleZoom, maxZoom), padding: handlers.getPadding() });
         return;
       }
       const bounds = new lib.LngLatBounds();
@@ -222,8 +234,9 @@ export function createMapView(container, handlers) {
       applyState();
     },
 
-    setRoute(coordinates) {
+    setRoute(coordinates, colors = routeColors) {
       route = coordinates;
+      routeColors = colors;
       paintRoute();
     },
 

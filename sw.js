@@ -8,9 +8,16 @@
 //
 // To ship an app update: change VERSION. Old app caches are deleted on activate.
 // (The tile cache has its own name, so updates don't throw your cached tiles away.)
-const VERSION = 'v7';
+//
+// Offline mode (a setting the page mirrors into the small OFFLINE_FLAG cache, since a worker can't read
+// localStorage): nothing is fetched from the network for other hosts, ever, and app files are served from
+// the cache without the background refresh. A request for one of our own files that was never cached still
+// goes to our own host as a last resort; anything else just fails.
+const VERSION = 'v8';
 const CACHE = `places-map-${VERSION}`;
 const TILE_CACHE = 'tiles-places-map';
+const OFFLINE_FLAG = 'offline-flag-places-map';
+const OFFLINE_URL = new URL('./offline-mode', self.location).href;
 
 const TILE_PATH = /\/\d{1,2}\/\d+\/\d+(\.[a-z0-9]+)?$/i;
 const TILE_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
@@ -39,6 +46,7 @@ const SHELL = [
   './js/mapView.js',
   './js/merge.js',
   './js/pmtilesHeader.js',
+  './js/offlineMode.js',
   './js/rating.js',
   './js/ramp.js',
   './js/repository.js',
@@ -67,18 +75,34 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  if (request.method !== 'GET') return;
-  // Reachability probes ask for a fresh answer; never answer those from cache.
-  if (request.cache === 'no-store' || request.cache === 'reload') return;
-
-  const url = new URL(request.url);
-  if (TILE_PATH.test(url.pathname)) { event.respondWith(tileResponse(event)); return; }
-
-  const ours = url.origin === self.location.origin;
-  if (!ours && url.hostname !== LIBRARY_HOST) return;
-  event.respondWith(staleWhileRevalidate(event));
+  if (event.request.method !== 'GET') return;
+  event.respondWith(respond(event));
 });
+
+async function offlineMode() {
+  try { return Boolean(await (await caches.open(OFFLINE_FLAG)).match(OFFLINE_URL)); } catch { return false; }
+}
+
+async function respond(event) {
+  const { request } = event;
+  const url = new URL(request.url);
+  const ours = url.origin === self.location.origin;
+
+  if (await offlineMode()) return cacheOnly(request, ours);
+  // Reachability probes ask for a fresh answer; never answer those from cache.
+  if (request.cache === 'no-store' || request.cache === 'reload') return fetch(request);
+  if (TILE_PATH.test(url.pathname)) return tileResponse(event);
+  if (!ours && url.hostname !== LIBRARY_HOST) return fetch(request);
+  return staleWhileRevalidate(event);
+}
+
+/** Offline mode: whatever is saved (app files, library, tiles), with no refresh. */
+async function cacheOnly(request, ours) {
+  const cached = await caches.match(request, { ignoreSearch: true });
+  if (cached) return cached;
+  if (request.mode === 'navigate') return (await caches.match('./index.html')) ?? Response.error();
+  return ours ? fetch(request).catch(() => Response.error()) : Response.error();
+}
 
 async function staleWhileRevalidate(event) {
   const { request } = event;

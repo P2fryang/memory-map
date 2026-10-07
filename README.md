@@ -44,6 +44,9 @@ visit, 30 characters each. Enter or comma adds a tag; text typed but not yet ent
 The `type:value` form (`trip:japan-2026`, `type:ramen`) is just a naming convention for now, but it leaves room to group
 tags into classes later without changing any saved data.
 
+**Default tags:** Settings → **Default tags** pre-fills the tag field of every new place and new visit (for example `usa`, `oregon`);
+remove any of them on the form. Editing an existing visit never adds them. Stored per device, like other settings.
+
 The dropdown always offers the **three most-used tags** you haven't picked yet (ranked by number of visits, then number
 of places, then alphabetically); type to search the rest. There is no separate tag list to maintain: the list of tags is
 computed from the visits, so a tag nobody uses simply stops existing the moment its last visit is deleted or edited,
@@ -116,11 +119,24 @@ Toolbar → **Timeline**: a slider over every visit date. Pins appear as you rea
 revisits so far; **Play** replays it. A line joins the pins in the order they were visited (date, then time, then place name,
 then the visit's created time, then its id; consecutive visits to the same place make no line). It follows the tag filter. The line is a gradient and the pins are tinted by when they were first visited, both from the
 same older-to-newer ramp (`js/ramp.js`, with a legend in the timeline panel); colours are relative to the pins shown so far.
+The three colours are changeable under **Colours and zoom** in the timeline panel (colour pickers, with Reset); the choice is saved on the device.
 
 By default it is intentionally low-detail (zoom limited to 1–8 in `TIMELINE_ZOOM`) and the camera stays still while it plays,
 so it loads few tiles. Tick **Zoom in on the pins shown** (for example with a `trip:` tag filter) to widen the zoom range to
-`TIMELINE_REGION` and have the camera fit the pins shown so far, down to roughly region level; it only moves when a new pin
-appears. This loads more map tiles, which is why it is opt-in.
+1–18 and have the camera fit the pins shown so far; it only moves when a new pin appears. With several pins it zooms as close
+as still shows all of them; a single pin goes to zoom 10 (about a region). Both are adjustable under **Colours and zoom**
+(closest zoom for several pins, default "as close as fits all" = 18; zoom for one pin, default 10). Closer zoom loads more
+map tiles, which is why the option is opt-in.
+
+## Offline mode
+
+Settings → **Offline mode**: the app makes no requests for anything outside the device. The map is drawn only from your offline
+map files (a blank background if you have none; the online map and your tile server are not contacted), and the service worker
+answers every request from its cache: other hosts are never contacted, and app files are not re-checked for updates (a file
+that was never cached is requested from your own host as a last resort). Turn it off to receive app updates.
+The service worker can't read localStorage, so the setting is mirrored into a tiny cache (`js/offlineMode.js`).
+The MapLibre/PMTiles libraries come from jsDelivr, so they must be saved first: the app only lets you turn offline mode on once
+the service worker has cached them, which takes opening the app online and reloading once or twice.
 
 ## Layout
 
@@ -139,6 +155,7 @@ appears. This loads more map tiles, which is why it is opt-in.
       tiles.js         tile sources, style building (online + offline layering), reachability probe
       mapFiles.js      stores .pmtiles files on the device     pmtilesHeader.js  reads/validates a file's header
       localMaps.js     connects stored files to MapLibre via the pmtiles library
+      offlineMode.js   shares the offline-mode setting with the service worker
       settings.js      per-device settings                config.js      constants
       geolocation.js, dates.js, dom.js, dialog.js, importReview.js, toast.js, rating.js
     tests/run.mjs      node tests (npm test)

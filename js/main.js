@@ -11,9 +11,10 @@ import { applyMerge, planMerge } from './merge.js';
 import { nearestPlace } from './geo.js';
 import { buildTimeline } from './timeline.js';
 import { rampColor } from './ramp.js';
+import { libraryCached, setOfflineFlag } from './offlineMode.js';
 import { filterPlaces, pruneFilter, tagStats } from './tags.js';
 import { ValidationError } from './validation.js';
-import { customSource, localSource, osmSource, probeSource, sourceLabel, styleFor, validateTileUrl } from './tiles.js';
+import { customSource, localSource, noneSource, osmSource, probeSource, sourceLabel, styleFor, validateTileUrl } from './tiles.js';
 import { createMapFileStore } from './mapFiles.js';
 import { MapFileError } from './pmtilesHeader.js';
 import { localMapsSupported, registerLocalFiles } from './localMaps.js';
@@ -42,7 +43,8 @@ const mapFiles = createMapFileStore();
 const state = {
   view: 'none', selectedId: null,
   form: null, formCtx: null, draft: null,
-  timeline: null, region: false, timelineState: null, fitKey: null, tagFilter: { tags: [], match: 'all' },
+  timeline: null, region: false, ramp: loadSettings().rampColors,
+  regionZoom: { max: loadSettings().regionFitMax, single: loadSettings().regionSingle }, timelineState: null, fitKey: null, tagFilter: { tags: [], match: 'all' },
   tileSource: null, styleKey: null, tileErrors: 0, checkingTiles: false,
   online: null, // the online map in use (OpenStreetMap or your server), or null when offline files are used alone
   mapMetas: [], localFiles: [], // offline map files: stored descriptions / registered with the map
@@ -154,6 +156,11 @@ function renderPanel() {
         onAddMapFile: addMapFile,
         onRemoveMapFile: removeMapFile,
         onToggleLocalOnline: toggleLocalOnline,
+        defaultTags: loadSettings().defaultTags,
+        tagStats: tagStats(store.places),
+        onDefaultTagsChange: (tags) => { if (!saveSettings({ ...loadSettings(), defaultTags: tags })) toast("Couldn't save settings on this device."); },
+        offline: loadSettings().offline,
+        onToggleOffline: toggleOffline,
       }));
       break;
     case 'timeline': {
@@ -165,6 +172,10 @@ function renderPanel() {
         onFilterChange: setTagFilter,
         region: state.region,
         onRegionChange: setTimelineRegion,
+        ramp: state.ramp,
+        onRampChange: setRamp,
+        zoom: state.regionZoom,
+        onZoomChange: setRegionZoom,
         onChange: onTimelineChange,
         onClose: () => setView('none'),
       });
@@ -213,9 +224,9 @@ function enterTimeline() {
 function onTimelineChange(s) {
   state.timelineState = s;
   mapView.setVisibility(s.counts);
-  mapView.setRoute(s.route);
+  mapView.setRoute(s.route, state.ramp);
   const order = [...new Set(s.routeIds)]; // pins are coloured by when they were first visited
-  mapView.setPinColors(new Map(order.map((id, i) => [id, rampColor(order.length > 1 ? i / (order.length - 1) : 0)])));
+  mapView.setPinColors(new Map(order.map((id, i) => [id, rampColor(order.length > 1 ? i / (order.length - 1) : 0, state.ramp)])));
   if (state.region) fitTimelineRegion();
 }
 
@@ -227,7 +238,7 @@ function fitTimelineRegion(force = false) {
   if (!force && key === state.fitKey) return;
   state.fitKey = key;
   const shown = store.places.filter((p) => s.counts.has(p.id));
-  mapView.fitToPlaces(shown.length ? shown : store.places, { maxZoom: TIMELINE_REGION.fitMaxZoom });
+  mapView.fitToPlaces(shown.length ? shown : store.places, { maxZoom: state.regionZoom.max, singleZoom: state.regionZoom.single });
 }
 
 function setTimelineRegion(on) {
@@ -235,6 +246,18 @@ function setTimelineRegion(on) {
   mapView.setZoomLimits(on ? TIMELINE_REGION : TIMELINE_ZOOM);
   if (on) fitTimelineRegion(true);
   else mapView.fitToPlaces(store.places, { maxZoom: TIMELINE_ZOOM.maxZoom });
+}
+
+function setRamp(colors) {
+  state.ramp = colors;
+  saveSettings({ ...loadSettings(), rampColors: colors });
+  if (state.timelineState) onTimelineChange(state.timelineState); // repaint the line and pins
+}
+
+function setRegionZoom(zoom) {
+  state.regionZoom = zoom;
+  saveSettings({ ...loadSettings(), regionFitMax: zoom.max, regionSingle: zoom.single });
+  if (state.region) fitTimelineRegion(true);
 }
 
 function leaveTimeline() {
@@ -280,9 +303,9 @@ function openForm(mode, { place, visit, latitude, longitude, zoom } = {}) {
     state.draft = { latitude, longitude };
   }
   const config = {
-    'add-place': { title: 'Add place', show: { place: true, visit: true }, initial: {} },
+    'add-place': { title: 'Add place', show: { place: true, visit: true }, initial: { tags: loadSettings().defaultTags } },
     'edit-place': { title: 'Edit place', show: { place: true, visit: false }, initial: { name: place?.name } },
-    'add-visit': { title: 'Add visit', subtitle: place?.name, show: { place: false, visit: true }, initial: {} },
+    'add-visit': { title: 'Add visit', subtitle: place?.name, show: { place: false, visit: true }, initial: { tags: loadSettings().defaultTags } },
     'edit-visit': { title: 'Edit visit', subtitle: place?.name, show: { place: false, visit: true }, initial: visit },
   }[mode];
 
@@ -569,8 +592,15 @@ function useSource(source) {
   if (state.view === 'settings') renderPanel();
 }
 
+/** Offline mode: only the offline map files (or a blank background), and no network requests for the map. */
+function showOffline() {
+  state.online = null;
+  useSource(state.localFiles.length ? localSource(state.localFiles, null) : noneSource());
+}
+
 /** Shows an online map (OpenStreetMap or your server), underneath the offline files if there are any. */
 function showOnline(online) {
+  if (loadSettings().offline) { showOffline(); return; }
   state.online = online;
   const settings = loadSettings();
   useSource(state.localFiles.length
@@ -627,6 +657,7 @@ function configuredServer(settings) {
 /** Picks the map to show: offline files first (if any), then your server, then OpenStreetMap. */
 async function setupTiles() {
   const settings = loadSettings();
+  if (settings.offline) { showOffline(); return; }
   const server = configuredServer(settings);
   const hasLocal = state.localFiles.length > 0;
 
@@ -723,6 +754,25 @@ async function removeMapFile(name) {
   if (state.view === 'settings') renderPanel();
 }
 
+async function toggleOffline(checked) {
+  // The service worker can only serve the map library without the network if it has saved it.
+  if (checked && !(await libraryCached())) {
+    await confirmDialog({
+      title: "Can't turn on offline mode yet",
+      message: "This device hasn't saved the map library yet. Open the app online and reload it once or twice, then try again.",
+      confirmLabel: 'OK',
+      cancelLabel: null,
+    });
+    renderPanel(); // puts the checkbox back
+    return;
+  }
+  if (!saveSettings({ ...loadSettings(), offline: checked })) { toast("Couldn't save settings on this device."); renderPanel(); return; }
+  await setOfflineFlag(checked);
+  await setupTiles();
+  toast(checked ? 'Offline mode on. Nothing is loaded from the internet.' : 'Offline mode off.');
+  if (state.view === 'settings') renderPanel();
+}
+
 async function toggleLocalOnline(checked) {
   saveSettings({ ...loadSettings(), localOnline: checked });
   await setupTiles();
@@ -753,6 +803,7 @@ $('#empty .text').textContent = EMPTY_TEXT;
 
 async function start() {
   setView('none');
+  setOfflineFlag(loadSettings().offline); // keep the service worker's copy of the setting in step
   // Order matters: put the camera where the saved places are BEFORE choosing the map, so the
   // map never requests tiles for a default world view that is immediately thrown away.
   try {

@@ -7,7 +7,7 @@ import { latestVisit, sortVisits } from './schema.js';
 import { validatePlaceBase, validateVisitFields } from './validation.js';
 import { validateTileUrl } from './tiles.js';
 import { MAX_TAGS_PER_VISIT, filterPlaces, placeTags } from './tags.js';
-import { RAMP } from './ramp.js';
+import { DEFAULT_RAMP, rampCss } from './ramp.js';
 import { renderTagPicker } from './tagPicker.js';
 
 const formatCoords = (lat, lng) => `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
@@ -250,6 +250,8 @@ export function renderSettings({
   count, lastExport, onExport, onImportFile, onClose,
   tiles, onSaveTiles, onClearTileCache,
   maps, onAddMapFile, onRemoveMapFile, onToggleLocalOnline,
+  offline, onToggleOffline,
+  defaultTags, tagStats, onDefaultTagsChange,
 }) {
   const mapFileInput = h('input', {
     type: 'file', hidden: true, // no `accept`: phones grey out unknown extensions like .pmtiles
@@ -304,6 +306,20 @@ export function renderSettings({
       h('button', { type: 'button', class: 'btn', onclick: () => fileInput.click() }, 'Import places…'),
     ),
     fileInput,
+
+    h('h3', {}, 'Default tags'),
+    h('p', {}, 'Added automatically to every new place and new visit. You can still remove them on the form.'),
+    renderTagPicker({
+      selected: defaultTags, stats: tagStats, allowNew: true, label: 'Default tags', placeholder: 'Add a default tag',
+      max: MAX_TAGS_PER_VISIT, onChange: onDefaultTagsChange,
+    }).el,
+    h('p', { class: 'hint' }, 'For example: usa, oregon. Press Enter or comma to add each one.'),
+
+    h('h3', {}, 'Offline mode'),
+    h('label', { class: 'check' },
+      h('input', { type: 'checkbox', checked: offline, onchange: (event) => onToggleOffline(event.target.checked) }),
+      h('span', {}, 'Never load anything from the internet')),
+    h('p', { class: 'hint' }, 'The map is drawn only from your offline map files (it is blank without them). No tile servers or library downloads are contacted, and the app stops checking for updates. Open the app online once or twice first so it can save itself on this device.'),
 
     h('h3', {}, 'Map tiles'),
     h('p', {}, `Currently using ${tiles.activeLabel}.`),
@@ -360,11 +376,15 @@ export function renderSettings({
  *   onFilterChange(f)  called whenever the user changes the filter
  *   onChange(state)    called with { date, counts, onDate, route, routeIds } whenever the slider moves
  *   region / onRegionChange(on)   the "Zoom in on the pins shown" checkbox (the caller moves the camera)
+ *   ramp / onRampChange(colours)   the three age colours (colour pickers in the options)
+ *   zoom { max, single } / onZoomChange(zoom)   zoom levels used by the checkbox above
  * Returns { el, ready, destroy, showPlace }. Call ready() once mounted to apply the first state.
  */
-export function renderTimeline({ getModel, stats, filter: initialFilter, onFilterChange, region, onRegionChange, onChange, onClose }) {
+export function renderTimeline({ getModel, stats, filter: initialFilter, onFilterChange, region, onRegionChange, ramp: initialRamp, onRampChange, zoom: initialZoom, onZoomChange, onChange, onClose }) {
   let filter = { tags: [...initialFilter.tags], match: initialFilter.match };
   let model = getModel(filter);
+  let ramp = [...initialRamp];
+  let zoom = { ...initialZoom };
   let index = 0;
   let timer = null;
   let playButton = null;
@@ -374,6 +394,33 @@ export function renderTimeline({ getModel, stats, filter: initialFilter, onFilte
 
   /* --- tag filter --- */
   const tagFilter = renderTagFilter({ stats, filter, onChange: (f) => { filter = f; refilter(); } });
+
+  /* --- legend, colours and zoom options --- */
+  const COLOR_LABELS = ['Older', 'Middle', 'Newer'];
+  const legendBar = h('div', { class: 'legend-bar' });
+  const legend = h('div', { class: 'legend', role: 'img', 'aria-label': 'Line and pin colours run from older visits to newer ones' },
+    legendBar, h('div', { class: 'legend-labels hint' }, h('span', {}, 'Older'), h('span', {}, 'Newer')));
+  const paintLegend = () => { legendBar.style.background = rampCss(ramp); };
+  const pickers = ramp.map((color, i) => h('input', { type: 'color', value: color, 'aria-label': `${COLOR_LABELS[i]} colour` }));
+  for (const picker of pickers) {
+    picker.addEventListener('input', () => { ramp = pickers.map((p) => p.value); paintLegend(); }); // live legend
+    picker.addEventListener('change', () => onRampChange([...ramp]));
+  }
+  function resetRamp() {
+    ramp = [...DEFAULT_RAMP];
+    pickers.forEach((p, i) => { p.value = ramp[i]; });
+    paintLegend();
+    onRampChange([...ramp]);
+  }
+  paintLegend();
+
+  function zoomRow(label, key, describe) {
+    const output = h('output', { class: 'hint' }, describe(zoom[key]));
+    const input = h('input', { type: 'range', min: '3', max: '18', step: '1', value: String(zoom[key]), 'aria-label': label });
+    input.addEventListener('input', () => { output.textContent = describe(Number(input.value)); });
+    input.addEventListener('change', () => { zoom = { ...zoom, [key]: Number(input.value) }; onZoomChange({ ...zoom }); });
+    return h('label', { class: 'zoom-row' }, `${label}: `, output, input);
+  }
 
   /* --- slider --- */
   function stop() {
@@ -441,13 +488,19 @@ export function renderTimeline({ getModel, stats, filter: initialFilter, onFilte
 
   return {
     el: h('section', { class: 'view timeline' }, head, tagFilter, body,
-      h('div', { class: 'legend', role: 'img', 'aria-label': 'Line and pin colours run from older visits to newer ones' },
-        h('div', { class: 'legend-bar', style: `background: linear-gradient(to right, ${RAMP.join(', ')})` }),
-        h('div', { class: 'legend-labels hint' }, h('span', {}, 'Older'), h('span', {}, 'Newer'))),
+      legend,
       h('label', { class: 'check' },
         h('input', { type: 'checkbox', checked: region, onchange: (event) => onRegionChange(event.target.checked) }),
         h('span', {}, 'Zoom in on the pins shown')),
-      h('p', { class: 'hint' }, 'Follows the slider and fits the pins shown so far, down to region level. Loads more map tiles than the default view.')),
+      h('p', { class: 'hint' }, 'Follows the slider and fits the pins shown so far. Loads more map tiles than the default view.'),
+      h('details', { class: 'options' },
+        h('summary', {}, 'Colours and zoom'),
+        h('div', { class: 'color-row' },
+          pickers.map((picker, i) => h('label', { class: 'color-pick' }, picker, h('span', { class: 'hint' }, COLOR_LABELS[i]))),
+          h('button', { type: 'button', class: 'btn small', onclick: resetRamp }, 'Reset')),
+        zoomRow('Several pins: closest zoom', 'max', (v) => (v === 18 ? 'as close as fits all' : `zoom ${v}`)),
+        zoomRow('One pin: zoom', 'single', (v) => `zoom ${v}`),
+        h('p', { class: 'hint' }, 'Lower numbers show a wider area (about 10 is a region, 14 a city, 18 a street).'))),
     ready() { current.apply(); },
     destroy: stop,
     showPlace(id) {

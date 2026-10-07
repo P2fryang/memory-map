@@ -328,3 +328,12 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .legend { margin-top: 12px; }
 .legend-bar { height: 8px; border-radius: 4px; }
 .legend-labels { display: flex; justify-content: space-between; margin-top: 2px; }
+
+/* ---------- timeline options ---------- */
+.options { margin-top: 12px; }
+.options summary { display: flex; align-items: center; min-height: 44px; font-weight: 600; cursor: pointer; }
+.color-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 4px; }
+.color-pick { display: grid; justify-items: center; gap: 2px; }
+.color-pick input { width: 48px; height: 48px; padding: 0; background: none; border: 1.5px solid var(--line); border-radius: 10px; }
+.zoom-row { display: block; margin-top: 12px; font-weight: 600; }
+.zoom-row .hint { font-weight: 400; }

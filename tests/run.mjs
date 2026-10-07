@@ -8,11 +8,12 @@ import { DEFAULT_TIME, isValidDateString, isValidTimeString } from '../js/dates.
 import { migratePlaceV1, isLegacyPlace, latestVisit, sortVisits } from '../js/schema.js';
 import { planMerge, applyMerge, mergePlaces, clashingVisits } from '../js/merge.js';
 import { buildTimeline } from '../js/timeline.js';
-import { RAMP, rampColor } from '../js/ramp.js';
+import { DEFAULT_RAMP as RAMP, isHexColor, rampColor } from '../js/ramp.js';
 import { distanceMeters, nearestPlace } from '../js/geo.js';
-import { validateTileUrl, styleFor, osmSource, customSource, localSource, localStyle, sourceLabel } from '../js/tiles.js';
+import { validateTileUrl, noneSource, probeSource, BLANK_STYLE, styleFor, osmSource, customSource, localSource, localStyle, sourceLabel } from '../js/tiles.js';
 import { parseHeader, MapFileError } from '../js/pmtilesHeader.js';
 import { keyFor } from '../js/localMaps.js';
+import { loadSettings } from '../js/settings.js';
 import { normalizeTag, normalizeTags, placeTags, tagStats, topTags, matchesTags, filterPlaces, pruneFilter } from '../js/tags.js';
 
 let passed = 0;
@@ -369,6 +370,23 @@ await test('source labels and map-file keys', () => {
   assert.equal(keyFor('My Map (v2).pmtiles'), 'local-My_Map__v2_.pmtiles');
 });
 
+await test('offline mode with no map files: blank background, nothing to fetch or probe', async () => {
+  assert.equal(styleFor(noneSource()), BLANK_STYLE);
+  assert.match(sourceLabel(noneSource()), /offline mode/);
+  assert.equal(await probeSource(noneSource()), true);
+});
+
+await test('settings: default tags are normalised, de-duplicated and limited', () => {
+  const stored = { defaultTags: ['USA', 'oregon', 'usa', '!!!', ...Array.from({ length: 15 }, (_, i) => `t${i}`)] };
+  globalThis.localStorage = { getItem: () => JSON.stringify(stored) };
+  const tags = loadSettings().defaultTags;
+  assert.deepEqual(tags.slice(0, 3), ['usa', 'oregon', 't0']);
+  assert.equal(tags.length, 12);
+  globalThis.localStorage = { getItem: () => JSON.stringify({ defaultTags: 'usa' }) };
+  assert.deepEqual(loadSettings().defaultTags, []);
+  delete globalThis.localStorage;
+});
+
 /* ---------- tags ---------- */
 const tagged = (id, tags, date = '2026-01-01') => visit(id, date, tags ? { tags } : {});
 
@@ -450,6 +468,9 @@ await test('age colour ramp: ends, middle and clamping', () => {
   assert.equal(rampColor(-3), RAMP[0]);
   assert.equal(rampColor(9), RAMP[2]);
   assert.match(rampColor(0.25), /^#[0-9a-f]{6}$/);
+  assert.equal(rampColor(0.5, ['#000000', '#ffffff']), '#808080'); // a user ramp
+  assert.equal(rampColor(1, ['#000000', '#ff0000', '#00ff00']), '#00ff00');
+  assert.deepEqual(['#a1B2c3', 'red', '#fff', 5].map(isHexColor), [true, false, false, false]);
 });
 await test('timeline with a tag filter counts only matching visits and dates', () => {
   const t = buildTimeline([A, B, C], { tags: ['ramen'], match: 'all' });

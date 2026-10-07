@@ -5,10 +5,13 @@ import { OSM_ATTRIBUTION, OSM_TILE_URL } from './config.js';
 export const osmSource = () => ({ kind: 'osm' });
 export const customSource = (url, attribution) => ({ kind: 'custom', url: url.trim(), attribution: attribution ?? '' });
 /** Offline map files drawn first; `online` (an osm/custom source, or null) fills in beyond them. */
+/** Offline mode with no map files: nothing to draw but the background. */
+export const noneSource = () => ({ kind: 'none' });
 export const localSource = (files, online) => ({ kind: 'local', files, online: online ?? null });
 
 export function sourceLabel(source) {
   if (source.kind === 'osm') return 'OpenStreetMap';
+  if (source.kind === 'none') return 'no map (offline mode, no map files added)';
   if (source.kind === 'custom') return 'your tile server';
   if (!source.online) return 'your offline map files only';
   return `your offline map files, with ${sourceLabel(source.online)} beyond them`;
@@ -106,6 +109,7 @@ export function localStyle(files, online) {
 /** A MapLibre `style` value (object or URL string) for a source. */
 export function styleFor(source) {
   if (source.kind === 'osm') return rasterStyle(OSM_TILE_URL, OSM_ATTRIBUTION);
+  if (source.kind === 'none') return BLANK_STYLE;
   if (source.kind === 'local') return localStyle(source.files, source.online);
   if (isStyleUrl(source.url)) return source.url;
   return rasterStyle(source.url, source.attribution);
@@ -117,7 +121,7 @@ export function styleFor(source) {
  * reached, so "no tile here" isn't mistaken for "server down".
  */
 export async function probeSource(source, timeoutMs = 4000) {
-  if (source.kind === 'osm' || source.kind === 'local') return true;
+  if (source.kind === 'osm' || source.kind === 'local' || source.kind === 'none') return true;
   const url = isStyleUrl(source.url)
     ? source.url
     : source.url.split('{z}').join('0').split('{x}').join('0').split('{y}').join('0');
