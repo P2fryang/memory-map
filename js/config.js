@@ -36,5 +36,11 @@ export const TIMELINE_REGION = { minZoom: 1, maxZoom: 18, fitMaxZoom: 18, single
 /** A new pin this close to a saved place offers "add a visit" instead of a duplicate place. */
 export const NEARBY_METERS = 75;
 
+/**
+ * Phone bottom sheet: it can be dragged (or arrowed) between min and maxFraction of the screen height; letting go
+ * below closeBelow closes it (a form in progress only shrinks to min, so nothing is lost). All in px except maxFraction.
+ */
+export const SHEET = { min: 96, closeBelow: 56, maxFraction: 0.9 };
+
 /** Width of the desktop sidebar in px (keep in sync with --sidebar in styles.css). */
 export const SIDEBAR_WIDTH = 360;

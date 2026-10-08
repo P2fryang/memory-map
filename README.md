@@ -59,6 +59,13 @@ Only matching visits count: slider dates, the "N of M places" line and the pin b
 shared: pins on the map show only places with a matching visit, and badges count matching visits. The Places button reads
 "Places · filtered" while a filter is active. The filter is not saved between sessions.
 
+## Resizing the panel on phones
+
+The bottom sheet has a handle at the top. Drag it (or focus it and press the up/down arrow keys) to make the sheet taller or
+shorter and see more of the map; the height is remembered until you reload. Let go with it nearly all the way down and the
+sheet closes. A form in progress only shrinks to a small strip, so nothing is lost. The map recentres the selected place in
+the space that is left. Sizes are in `SHEET` in `js/config.js`.
+
 ## Import: Add or Replace
 
 - **Add to my places**: new places are added; places already here are skipped; if the file only adds visits to a place

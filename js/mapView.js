@@ -211,7 +211,7 @@ export function createMapView(container, handlers) {
       for (const p of places) bounds.extend([p.longitude, p.latitude]);
       const pad = handlers.getPadding();
       map.fitBounds(bounds, {
-        padding: { top: pad.top + 80, right: pad.right + 40, bottom: pad.bottom + 120, left: pad.left + 40 },
+        padding: { top: pad.top + 80, right: pad.right + 40, bottom: pad.bottom + (pad.bottom > 0 ? 24 : 120), left: pad.left + 40 }, // an open sheet already clears the bottom
         maxZoom,
         duration: 0, // jump, don't animate: fewer tiles requested along the way
       });

@@ -105,6 +105,19 @@ h2, h3, p { margin: 0; }
   .empty-card { display: none; }
 }
 
+.panel-handle { display: none; }
+@media (max-width: 799px) {
+  .panel-handle {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; align-items: center; justify-content: center;
+    height: 36px; margin-bottom: -6px;
+    background: var(--paper); border-radius: 18px 18px 0 0;
+    touch-action: none; cursor: grab;
+  }
+  .panel-handle::before { content: ''; width: 44px; height: 5px; border-radius: 3px; background: var(--line); }
+  .panel-handle:focus-visible::before { background: var(--lagoon); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .panel { transition: none; }
 }

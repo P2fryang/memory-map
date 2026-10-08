@@ -1,6 +1,6 @@
 // Controller: wires the store, the map and the panel views together.
 import { $ } from './dom.js';
-import { NEARBY_METERS, SELF_HOSTED_TILES, SIDEBAR_WIDTH, TIMELINE_REGION, TIMELINE_ZOOM } from './config.js';
+import { NEARBY_METERS, SELF_HOSTED_TILES, SHEET, SIDEBAR_WIDTH, TIMELINE_REGION, TIMELINE_ZOOM } from './config.js';
 import { formatDate, todayLocal } from './dates.js';
 import { createPlaceRepository } from './repository.js';
 import { createStore } from './store.js';
@@ -30,6 +30,7 @@ const desktop = matchMedia('(min-width: 800px)');
 
 const panelBody = $('#panel-body');
 const panel = $('#panel');
+const handle = $('#panel-handle');
 const pinButton = $('#pin-button');
 const emptyCard = $('#empty');
 
@@ -43,6 +44,7 @@ const mapFiles = createMapFileStore();
 const state = {
   view: 'none', selectedId: null,
   form: null, formCtx: null, draft: null,
+  sheetHeight: null, // phone: height the user dragged the panel to (null = fit the content)
   timeline: null, region: false, ramp: loadSettings().rampColors,
   regionZoom: { max: loadSettings().regionFitMax, single: loadSettings().regionSingle }, timelineState: null, fitKey: null, tagFilter: { tags: [], match: 'all' },
   tileSource: null, styleKey: null, tileErrors: 0, checkingTiles: false,
@@ -62,10 +64,9 @@ const mapView = createMapView($('#map'), {
 
 function getPadding() {
   if (desktop.matches) return { top: 0, right: 0, bottom: 0, left: SIDEBAR_WIDTH };
-  let bottom = 0;
-  if (state.view === 'detail' || state.view === 'form') bottom = Math.round(innerHeight * 0.45);
-  else if (state.view === 'timeline') bottom = 260;
-  return { top: 0, right: 0, left: 0, bottom };
+  // Keep the map's centre clear of the sheet at whatever height it currently has.
+  const covered = ['detail', 'form', 'timeline'].includes(state.view);
+  return { top: 0, right: 0, left: 0, bottom: covered ? Math.min(Math.round(panel.offsetHeight), Math.round(innerHeight * 0.7)) : 0 };
 }
 
 /** Places drawn as normal markers (the one being relocated is shown as the draft pin instead). */
@@ -96,11 +97,64 @@ function setView(view) {
   state.view = view;
   document.body.dataset.view = view;
   if (leaving) leaveTimeline();
+  applySheet();
   panel.inert = view === 'none'; // only reachable on phones, where the sheet is hidden
   renderPanel();
   updateEmpty();
   if (entering) enterTimeline();
 }
+
+/* ---------- phone sheet: drag the handle to resize, or all the way down to close ---------- */
+
+const sheetMax = () => Math.round(innerHeight * SHEET.maxFraction);
+
+function applySheet() {
+  panel.style.height = '';
+  panel.style.maxHeight = !desktop.matches && state.sheetHeight ? `${state.sheetHeight}px` : '';
+}
+
+function finishResize(height) {
+  if (height < SHEET.closeBelow && state.view !== 'form') {
+    applySheet();
+    if (state.view === 'detail') closeDetail();
+    else setView('none');
+    return;
+  }
+  state.sheetHeight = Math.max(SHEET.min, Math.round(Math.min(height, sheetMax())));
+  applySheet();
+  // Bring the selected place or draft pin back into the part of the map that is still visible.
+  const target = state.draft ?? store.get(state.selectedId);
+  if (target && (state.view === 'detail' || state.view === 'form')) mapView.flyTo(target.latitude, target.longitude);
+  if (state.view === 'timeline' && state.region) fitTimelineRegion(true); // the visible map area changed
+}
+
+handle.addEventListener('pointerdown', (event) => {
+  if (desktop.matches) return;
+  event.preventDefault();
+  handle.setPointerCapture(event.pointerId);
+  const startY = event.clientY;
+  const startHeight = panel.getBoundingClientRect().height;
+  let height = startHeight;
+  const move = (e) => {
+    height = Math.max(0, Math.min(sheetMax(), startHeight + startY - e.clientY));
+    panel.style.maxHeight = panel.style.height = `${height}px`;
+  };
+  const end = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', end);
+    handle.removeEventListener('pointercancel', end);
+    finishResize(height);
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+});
+
+handle.addEventListener('keydown', (event) => {
+  if (desktop.matches || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+  event.preventDefault();
+  finishResize(panel.getBoundingClientRect().height + (event.key === 'ArrowUp' ? 48 : -48));
+});
 
 /** Chip buttons: toggle a panel, but never silently throw away a form in progress. */
 function navigate(view) {
@@ -794,6 +848,7 @@ $('#timeline-button').addEventListener('click', () => navigate('timeline'));
 $('#places-button').addEventListener('click', () => navigate('list'));
 
 desktop.addEventListener('change', () => {
+  applySheet();
   if (desktop.matches && state.view === 'none') setView('list');
   else if (!desktop.matches && state.view === 'list') setView('none');
 });
