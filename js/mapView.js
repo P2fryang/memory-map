@@ -210,8 +210,15 @@ export function createMapView(container, handlers) {
       const bounds = new lib.LngLatBounds();
       for (const p of places) bounds.extend([p.longitude, p.latitude]);
       const pad = handlers.getPadding();
+      // flyTo/jumpTo padding stays on the map afterwards and would stack with the fit padding below
+      // (a sheet's height counted twice leaves no room on a phone), so clear it before fitting.
+      map.jumpTo({ padding: { top: 0, right: 0, bottom: 0, left: 0 } });
+      let top = pad.top + 80;
+      let bottom = pad.bottom + (pad.bottom > 0 ? 24 : 120); // an open sheet already clears the bottom
+      const room = Math.max(40, map.getContainer().clientHeight - 140); // always leave some map to fit into
+      if (top + bottom > room) { const k = room / (top + bottom); top *= k; bottom *= k; }
       map.fitBounds(bounds, {
-        padding: { top: pad.top + 80, right: pad.right + 40, bottom: pad.bottom + (pad.bottom > 0 ? 24 : 120), left: pad.left + 40 }, // an open sheet already clears the bottom
+        padding: { top, right: pad.right + 40, bottom, left: pad.left + 40 },
         maxZoom,
         duration: 0, // jump, don't animate: fewer tiles requested along the way
       });
