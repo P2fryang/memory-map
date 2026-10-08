@@ -350,3 +350,6 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .color-pick input { width: 48px; height: 48px; padding: 0; background: none; border: 1.5px solid var(--line); border-radius: 10px; }
 .zoom-row { display: block; margin-top: 12px; font-weight: 600; }
 .zoom-row .hint { font-weight: 400; }
+
+/* ---------- asset licences ---------- */
+.license { margin: 8px 0 0; padding: 10px; max-height: 50dvh; overflow: auto; font: .8rem/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; background: var(--fog); border-radius: 8px; }

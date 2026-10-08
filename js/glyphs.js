@@ -123,7 +123,7 @@ export function glyphRangeBytes(stackName, start, end, draw) {
 
 const FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif';
 
-/** Returns draw(char, stackName) for glyphRangeBytes. "Bold" / "Italic" in the font name pick that style. */
+/** Returns draw(char, stackName) for glyphRangeBytes. "Bold", "Medium" and "Italic" in the font name pick that style. */
 export function canvasGlyphDrawer() {
   let ctx = null;
   return (char, stackName) => {
@@ -135,7 +135,8 @@ export function canvasGlyphDrawer() {
       ctx.textAlign = 'left';
       ctx.fillStyle = '#000';
     }
-    ctx.font = `${/italic/i.test(stackName) ? 'italic ' : ''}${/bold/i.test(stackName) ? 'bold ' : ''}${FONT_SIZE}px ${FAMILY}`;
+    const weight = /bold/i.test(stackName) ? 'bold ' : /medium/i.test(stackName) ? '500 ' : '';
+    ctx.font = `${/italic/i.test(stackName) ? 'italic ' : ''}${weight}${FONT_SIZE}px ${FAMILY}`;
     const m = ctx.measureText(char);
     const advance = Math.round(m.width);
     const ascent = Math.ceil(m.actualBoundingBoxAscent);

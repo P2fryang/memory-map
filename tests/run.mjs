@@ -13,6 +13,9 @@ import { distanceMeters, nearestPlace } from '../js/geo.js';
 import { validateTileUrl, noneSource, probeSource, BLANK_STYLE, styleFor, osmSource, customSource, localSource, localStyle, sourceLabel } from '../js/tiles.js';
 import { parseHeader, MapFileError } from '../js/pmtilesHeader.js';
 import { alphaToSdf, encodeGlyphRange, glyphRangeBytes } from '../js/glyphs.js';
+import { classifyAssetPath, summarizeAssets } from '../js/assetFiles.js';
+import { readZip, ZipError } from '../js/zip.js';
+import { deflateRawSync } from 'node:zlib';
 import { keyFor } from '../js/localMaps.js';
 import { loadSettings } from '../js/settings.js';
 import { normalizeTag, normalizeTags, placeTags, tagStats, topTags, matchesTags, filterPlaces, pruneFilter } from '../js/tags.js';
@@ -468,6 +471,75 @@ await test('distance field: solid inside, edge near the 0.75 mark, nothing far o
   assert.equal(sdf[0], 0); // far corner
   const half = alphaToSdf(new Uint8ClampedArray([0, 128, 255]), 3, 1);
   assert.ok(half[0] < half[1] && half[1] < half[2]); // anti-aliased pixels land in between
+});
+
+/* ---------- uploaded fonts and sprites ---------- */
+
+/** A small .zip (stored and deflated entries) built by hand, so the reader is tested without a zip tool. */
+function makeZip(files) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, content, deflate] of files) {
+    const raw = Buffer.from(content);
+    const data = deflate ? deflateRawSync(raw) : raw;
+    const nameBytes = Buffer.from(name);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(deflate ? 8 : 0, 8);
+    local.writeUInt32LE(data.length, 18); local.writeUInt32LE(raw.length, 22); local.writeUInt16LE(nameBytes.length, 26);
+    const head = Buffer.alloc(46);
+    head.writeUInt32LE(0x02014b50, 0); head.writeUInt16LE(deflate ? 8 : 0, 10);
+    head.writeUInt32LE(data.length, 20); head.writeUInt32LE(raw.length, 24); head.writeUInt16LE(nameBytes.length, 28);
+    head.writeUInt32LE(offset, 42);
+    central.push(head, nameBytes);
+    parts.push(local, nameBytes, data);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const dir = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+  return new Blob([...parts, dir, end]);
+}
+
+await test('asset paths: fonts, sprites (any version folder, 1x/2x) and licences are recognised; the rest is ignored', () => {
+  const c = classifyAssetPath;
+  assert.equal(c('basemaps-assets-main/fonts/Noto Sans Regular/0-255.pbf'), 'fonts/Noto Sans Regular/0-255.pbf');
+  assert.equal(c('fonts\\Noto Sans Italic\\256-511.pbf'), 'fonts/Noto Sans Italic/256-511.pbf');
+  assert.equal(c('x/sprites/v3/light@2x.png'), 'sprites/light@2x.png');
+  assert.equal(c('sprites/dark.json'), 'sprites/dark.json');
+  assert.equal(c('x/fonts/OFL.txt'), 'licenses/fonts/OFL.txt');
+  assert.equal(c('x/sprites/LICENSE.md'), 'licenses/sprites/LICENSE.md');
+  for (const other of ['README.md', 'x/scripts/build.sh', 'x/fonts/Noto Sans Regular/notes.txt', 'x/sprites/v3/']) assert.equal(c(other), null, other);
+});
+await test('asset summary: fonts, complete sprite sheets only, licences', () => {
+  const s = summarizeAssets(['fonts/B/0-255.pbf', 'fonts/A/0-255.pbf', 'fonts/A/256-511.pbf', 'sprites/light.png', 'sprites/light@2x.json',
+    'sprites/dark.png', 'licenses/fonts/OFL.txt']);
+  assert.deepEqual(s, { fonts: ['A', 'B'], sprites: ['light'], licenses: ['licenses/fonts/OFL.txt'] }); // dark has no .json
+});
+await test('zip: reads stored and deflated entries, only the wanted ones; bad files give readable errors', async () => {
+  const zip = makeZip([
+    ['pkg/', '', false],
+    ['pkg/fonts/Noto Sans Regular/0-255.pbf', 'glyphs '.repeat(200), true],
+    ['pkg/sprites/v3/light.json', '{"a":1}', false],
+    ['pkg/scripts/build.sh', 'echo hi', true],
+  ]);
+  const files = await readZip(zip, classifyAssetPath);
+  assert.deepEqual(files.map((f) => f.path), ['fonts/Noto Sans Regular/0-255.pbf', 'sprites/light.json']);
+  assert.equal(await files[0].blob.text(), 'glyphs '.repeat(200));
+  assert.equal(await files[1].blob.text(), '{"a":1}');
+  await assert.rejects(() => readZip(new Blob(['not a zip']), classifyAssetPath), (e) => e instanceof ZipError && /isn't a ZIP/.test(e.message));
+});
+await test('offline style with sprites: sprite address and icon layer; without them, dots only', () => {
+  const plain = localStyle([world], null, true);
+  assert.equal(plain.sprite, undefined);
+  assert.ok(!plain.layers.some((l) => l['icon-image'] || l.layout?.['icon-image']));
+  const style = localStyle([world, tokyo], null, true, 'light');
+  assert.equal(style.sprite, 'spriteasset://sprites/light');
+  const icons = style.layers.filter((l) => l.layout?.['icon-image']);
+  assert.deepEqual(icons.map((l) => l.id), ['file0-pois-label', 'file1-pois-label']);
+  assert.equal(style.layers.find((l) => l.id === 'file0-pois-dot').maxzoom, 15); // dots hand over to icons
+  assert.equal(localStyle([world], null, false, 'light').sprite, undefined); // sprites belong with names
+  assert.equal(styleFor(localSource([world], null, true, 'dark')).sprite, 'spriteasset://sprites/dark');
 });
 
 /* ---------- tags ---------- */

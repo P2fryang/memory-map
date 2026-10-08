@@ -250,6 +250,7 @@ export function renderSettings({
   count, lastExport, onExport, onImportFile, onClose,
   tiles, onSaveTiles, onClearTileCache,
   maps, onAddMapFile, onRemoveMapFile, onToggleLocalOnline, onToggleLabels,
+  assets, onAddAssets, onRemoveAssets, onSpriteTheme, onShowLicense,
   offline, onToggleOffline,
   defaultTags, tagStats, onDefaultTagsChange,
 }) {
@@ -261,6 +262,17 @@ export function renderSettings({
       if (file) onAddMapFile(file);
     },
   });
+
+  const assetInput = (folder) => h('input', {
+    type: 'file', hidden: true, multiple: true, ...(folder ? { webkitdirectory: true } : { accept: '.zip,application/zip' }),
+    onchange: (event) => {
+      const files = [...event.target.files];
+      event.target.value = '';
+      if (files.length) onAddAssets(files);
+    },
+  });
+  const assetZipInput = assetInput(false);
+  const assetFolderInput = assetInput(true);
 
   const fileInput = h('input', {
     type: 'file', accept: 'application/json,.json', hidden: true,
@@ -365,6 +377,34 @@ export function renderSettings({
           h('span', {}, 'Show names on offline maps'))
       : null,
     h('p', { class: 'hint' }, "Files are copied into this browser and never uploaded. Names (places, roads, water, points of interest) are drawn with this device's own fonts, so nothing is downloaded; points of interest are plain dots. Keep an eye on file sizes, especially on a phone."),
+
+    h('h3', {}, 'Fonts and sprites (optional)'),
+    h('p', {}, "Offline names use this device's fonts, and points of interest are plain dots. To use Noto Sans text and map icons instead, add the files from Protomaps' basemaps-assets: download its ZIP (Code → Download ZIP on GitHub), or pick the extracted folder on a computer."),
+    assets.summary.fonts.length || assets.summary.sprites.length
+      ? h('ul', { class: 'file-list' },
+          h('li', {}, h('span', {}, assets.summary.fonts.length ? `Fonts: ${assets.summary.fonts.join(', ')}` : 'No fonts added.')),
+          h('li', {}, h('span', {}, assets.summary.sprites.length ? `Sprites: ${assets.summary.sprites.join(', ')}` : 'No sprites added.')))
+      : h('p', { class: 'hint' }, 'No fonts or sprites added yet.'),
+    assets.summary.sprites.length > 1
+      ? h('div', { class: 'field' },
+          h('label', { for: 's-sprite' }, 'Icon style'),
+          h('select', { id: 's-sprite', class: 'select', onchange: (event) => onSpriteTheme(event.target.value) },
+            assets.summary.sprites.map((theme) => h('option', { value: theme, selected: theme === assets.theme }, theme))))
+      : null,
+    h('div', { class: 'actions stack' },
+      h('button', { type: 'button', class: 'btn', onclick: () => assetZipInput.click() }, 'Add assets ZIP…'),
+      h('button', { type: 'button', class: 'btn', onclick: () => assetFolderInput.click() }, 'Add assets folder…'),
+      assets.summary.fonts.length || assets.summary.sprites.length
+        ? h('button', { type: 'button', class: 'btn danger-outline', onclick: onRemoveAssets }, 'Remove fonts and sprites')
+        : null,
+    ),
+    assetZipInput,
+    assetFolderInput,
+    assets.summary.licenses.length
+      ? h('div', { class: 'actions wrap' }, assets.summary.licenses.map((path) =>
+          h('button', { type: 'button', class: 'btn small', onclick: () => onShowLicense(path) }, `Licence: ${path.split('/').pop()}`)))
+      : null,
+    h('p', { class: 'hint' }, "These files are not part of this app and are never uploaded; they stay in this browser, unchanged, with their licence files. In basemaps-assets the fonts (Noto Sans) are under the SIL Open Font License and the sprites derive from MIT-licensed tangrams icons; keep their licences with any copy you share."),
 
     h('h3', {}, 'Privacy'),
     h('p', {}, 'Your places never leave this device. Your location is read only when you tap Pin location, and only saved if you save the place.'),

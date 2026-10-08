@@ -120,6 +120,24 @@ the device has no font for show as boxes, and the first view of each new range o
 are plain dots (icons would need a sprite sheet). Raster files have names baked into their pictures, so this setting does not
 affect them. If your extract uses different property names for kinds or names, adjust `labelLayers` in `js/tiles.js`.
 
+**Fonts and sprites (optional, uploaded by you)** (Settings → *Fonts and sprites*): to draw names in Noto Sans and points of
+interest as icons, add [protomaps/basemaps-assets](https://github.com/protomaps/basemaps-assets): press *Code → Download ZIP* there and
+pick the ZIP with *Add assets ZIP…* (works on phones), or pick the extracted folder with *Add assets folder…* (computers). Only
+`fonts/<name>/<range>.pbf`, `sprites/[v3/]<theme>[@2x].png|json` and the licence files next to them are kept; everything else in
+the ZIP is skipped. They are stored unchanged in this browser (IndexedDB, separate from your places and map files) and never uploaded.
+
+- **Licensing:** the assets are deliberately *not* bundled with this app. In basemaps-assets the fonts (Noto Sans) are under the SIL
+  Open Font License and the sprites derive from MIT-licensed tangrams icons; both ask that their licence text travels with them.
+  Uploading keeps the files exactly as published together with their `OFL.txt` / `LICENSE` files, which Settings lists with a
+  button to read each.
+- **Fonts:** label layers use the font names `Noto Sans Regular`, `Noto Sans Italic` and `Noto Sans Medium`. Each glyph file that
+  you added is served as is; any range you did not add falls back to the device-made glyphs described above.
+- **Sprites:** with a sprite sheet added, points of interest become icons (the icon whose name matches the place's kind; dots
+  remain for kinds without an icon) from zoom 15. With several sheets (`light`, `dark`, ...) choose one under *Icon style*.
+  A phone asks for the `@2x` sheet; if only the 1x sheet was added it is used instead.
+- Removing the assets (or adding other ones) rebuilds the map style straight away. Offline mode needs nothing extra: the files
+  are read from the device.
+
 Making files (on your computer, with the PMTiles command-line tool; check its docs for current flags and where Protomaps
 publishes planet builds). The usual shape is one extract for the whole world at low zoom, plus one per region you pin often:
 
@@ -169,6 +187,7 @@ the service worker has cached them, which takes opening the app online and reloa
       mapView.js       MapLibre adapter (only file that touches the map library)
       tiles.js         tile sources, style building (online + offline layering), reachability probe
       glyphs.js        offline text: glyph files made from device fonts
+      assetFiles.js    uploaded fonts/sprites: path rules + IndexedDB store    zip.js  reads wanted files out of a .zip
       mapFiles.js      stores .pmtiles files on the device     pmtilesHeader.js  reads/validates a file's header
       localMaps.js     connects stored files to MapLibre via the pmtiles library
       offlineMode.js   shares the offline-mode setting with the service worker

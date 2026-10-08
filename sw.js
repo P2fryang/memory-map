@@ -13,7 +13,7 @@
 // localStorage): nothing is fetched from the network for other hosts, ever, and app files are served from
 // the cache without the background refresh. A request for one of our own files that was never cached still
 // goes to our own host as a last resort; anything else just fails.
-const VERSION = 'v10';
+const VERSION = 'v11';
 const CACHE = `places-map-${VERSION}`;
 const TILE_CACHE = 'tiles-places-map';
 const OFFLINE_FLAG = 'offline-flag-places-map';
@@ -34,6 +34,7 @@ const SHELL = [
   './icons/icon-512.png',
   './js/main.js',
   './js/config.js',
+  './js/assetFiles.js',
   './js/dates.js',
   './js/dialog.js',
   './js/dom.js',
@@ -61,6 +62,7 @@ const SHELL = [
   './js/toast.js',
   './js/validation.js',
   './js/views.js',
+  './js/zip.js',
 ];
 
 self.addEventListener('install', (event) => {

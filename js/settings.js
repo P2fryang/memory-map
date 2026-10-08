@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = {
   tileAttribution: '© OpenStreetMap contributors',
   fallback: 'ask', // what to do when the tile server can't be reached: 'ask' | 'always' | 'never'
   localOnline: true, // with offline map files: also use the online map for detail beyond them
+  spriteTheme: 'light', // which uploaded sprite sheet to use for map icons
   offlineLabels: true, // draw names (places, roads, water, points of interest) on offline map files
   defaultTags: [], // pre-filled on the form for every new place and new visit
   offline: false, // offline mode: never load anything from the internet
@@ -29,6 +30,7 @@ export function loadSettings() {
       fallback: ['ask', 'always', 'never'].includes(stored.fallback) ? stored.fallback : DEFAULT_SETTINGS.fallback,
       localOnline: typeof stored.localOnline === 'boolean' ? stored.localOnline : DEFAULT_SETTINGS.localOnline,
       defaultTags: normalizeTags(Array.isArray(stored.defaultTags) ? stored.defaultTags : []).slice(0, MAX_TAGS_PER_VISIT),
+      spriteTheme: typeof stored.spriteTheme === 'string' && stored.spriteTheme ? stored.spriteTheme : DEFAULT_SETTINGS.spriteTheme,
       offlineLabels: typeof stored.offlineLabels === 'boolean' ? stored.offlineLabels : DEFAULT_SETTINGS.offlineLabels,
       offline: stored.offline === true,
       rampColors: Array.isArray(stored.rampColors) && stored.rampColors.length === 3 && stored.rampColors.every(isHexColor)

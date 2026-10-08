@@ -1,5 +1,5 @@
 // Controller: wires the store, the map and the panel views together.
-import { $ } from './dom.js';
+import { $, h } from './dom.js';
 import { NEARBY_METERS, SELF_HOSTED_TILES, SHEET, SIDEBAR_WIDTH, TIMELINE_REGION, TIMELINE_ZOOM } from './config.js';
 import { formatDate, todayLocal } from './dates.js';
 import { createPlaceRepository } from './repository.js';
@@ -17,7 +17,9 @@ import { ValidationError } from './validation.js';
 import { customSource, localSource, noneSource, osmSource, probeSource, sourceLabel, styleFor, validateTileUrl } from './tiles.js';
 import { createMapFileStore } from './mapFiles.js';
 import { MapFileError } from './pmtilesHeader.js';
-import { localMapsSupported, registerLocalFiles } from './localMaps.js';
+import { localMapsSupported, registerLocalFiles, setAssetStore } from './localMaps.js';
+import { classifyAssetPath, createAssetStore, summarizeAssets } from './assetFiles.js';
+import { readZip, ZipError } from './zip.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { renderList, renderDetail, renderForm, renderSettings, renderTimeline, EMPTY_TITLE, EMPTY_TEXT } from './views.js';
 import { choiceDialog, confirmDialog } from './dialog.js';
@@ -36,6 +38,8 @@ const emptyCard = $('#empty');
 
 const store = createStore(createPlaceRepository());
 const mapFiles = createMapFileStore();
+const assetStore = createAssetStore(); // optional fonts and sprites the user uploaded
+setAssetStore(assetStore);
 
 /**
  * view: 'none' | 'list' | 'detail' | 'form' | 'settings' | 'timeline'
@@ -49,6 +53,7 @@ const state = {
   regionZoom: { max: loadSettings().regionFitMax, single: loadSettings().regionSingle }, timelineState: null, fitKey: null, tagFilter: { tags: [], match: 'all' },
   tileSource: null, styleKey: null, tileErrors: 0, checkingTiles: false,
   online: null, // the online map in use (OpenStreetMap or your server), or null when offline files are used alone
+  assets: { fonts: [], sprites: [], licenses: [] }, // summary of the uploaded fonts and sprites
   mapMetas: [], localFiles: [], // offline map files: stored descriptions / registered with the map
 };
 
@@ -211,6 +216,11 @@ function renderPanel() {
         onRemoveMapFile: removeMapFile,
         onToggleLocalOnline: toggleLocalOnline,
         onToggleLabels: toggleLabels,
+        assets: { summary: state.assets, theme: spriteTheme() },
+        onAddAssets: addAssets,
+        onRemoveAssets: removeAssets,
+        onSpriteTheme: chooseSpriteTheme,
+        onShowLicense: showLicense,
         defaultTags: loadSettings().defaultTags,
         tagStats: tagStats(store.places),
         onDefaultTagsChange: (tags) => { if (!saveSettings({ ...loadSettings(), defaultTags: tags })) toast("Couldn't save settings on this device."); },
@@ -650,7 +660,7 @@ function useSource(source) {
 /** Offline mode: only the offline map files (or a blank background), and no network requests for the map. */
 function showOffline() {
   state.online = null;
-  useSource(state.localFiles.length ? localSource(state.localFiles, null, loadSettings().offlineLabels) : noneSource());
+  useSource(state.localFiles.length ? localSource(state.localFiles, null, loadSettings().offlineLabels, spriteTheme()) : noneSource());
 }
 
 /** Shows an online map (OpenStreetMap or your server), underneath the offline files if there are any. */
@@ -659,7 +669,7 @@ function showOnline(online) {
   state.online = online;
   const settings = loadSettings();
   useSource(state.localFiles.length
-    ? localSource(state.localFiles, settings.localOnline ? online : null, settings.offlineLabels)
+    ? localSource(state.localFiles, settings.localOnline ? online : null, settings.offlineLabels, spriteTheme())
     : online);
 }
 
@@ -828,6 +838,91 @@ async function toggleOffline(checked) {
   if (state.view === 'settings') renderPanel();
 }
 
+/* ---------- optional fonts and sprites (uploaded by the user) ---------- */
+
+/** The sprite sheet to draw icons from: the chosen one if it was added, else the first available, else none. */
+function spriteTheme() {
+  const themes = state.assets.sprites;
+  const wanted = loadSettings().spriteTheme;
+  return themes.includes(wanted) ? wanted : (themes[0] ?? null);
+}
+
+async function loadAssets() {
+  try { state.assets = summarizeAssets(await assetStore.list()); } catch { state.assets = { fonts: [], sprites: [], licenses: [] }; }
+}
+
+/** Applies changed assets to the map: the style is rebuilt even if its text didn't change (cached glyphs). */
+async function refreshAssets() {
+  await loadAssets();
+  state.styleKey = null;
+  await setupTiles();
+  if (state.view === 'settings') renderPanel();
+}
+
+async function addAssets(files) {
+  let entries = [];
+  try {
+    for (const file of files) {
+      if (/\.zip$/i.test(file.name)) entries.push(...await readZip(file, classifyAssetPath));
+      else {
+        const path = classifyAssetPath(file.webkitRelativePath || `sprites/${file.name}`); // a loose sprite file has no folder
+        if (path) entries.push({ path, blob: file });
+      }
+    }
+    if (entries.length) await assetStore.putMany(entries);
+  } catch (err) {
+    if (!(err instanceof ZipError)) console.error(err);
+    entries = null;
+    await confirmDialog({
+      title: "Can't add these files",
+      message: err instanceof ZipError ? err.message : "The files couldn't be saved on this device. They may be too large.",
+      confirmLabel: 'OK',
+      cancelLabel: null,
+    });
+  }
+  if (!entries) return;
+  if (!entries.length) {
+    await confirmDialog({
+      title: 'Nothing to add',
+      message: 'No font (.pbf) or sprite (.png, .json) files were found. Use the ZIP or folder from Protomaps basemaps-assets.',
+      confirmLabel: 'OK',
+      cancelLabel: null,
+    });
+    return;
+  }
+  navigator.storage?.persist?.().catch(() => {});
+  toast(`Added ${entries.length} ${entries.length === 1 ? 'file' : 'files'}.`);
+  await refreshAssets();
+}
+
+async function removeAssets() {
+  const confirmed = await confirmDialog({
+    title: 'Remove fonts and sprites?',
+    message: 'The uploaded font and sprite files (and their licence files) will be removed from this device. You can add them again later.',
+    confirmLabel: 'Remove',
+    cancelLabel: 'Keep',
+    danger: true,
+  });
+  if (!confirmed) return;
+  try { await assetStore.clear(); } catch (err) { console.error(err); toast("Couldn't remove the files."); return; }
+  await refreshAssets();
+}
+
+async function chooseSpriteTheme(theme) {
+  saveSettings({ ...loadSettings(), spriteTheme: theme });
+  await setupTiles();
+  if (state.view === 'settings') renderPanel();
+}
+
+async function showLicense(path) {
+  const blob = await assetStore.get(path).catch(() => null);
+  await choiceDialog({
+    title: `Licence: ${path.replace(/^licenses\//, '')}`,
+    content: h('pre', { class: 'license' }, blob ? await blob.text() : 'This file is no longer stored.'),
+    choices: [{ value: 'ok', label: 'Close', kind: 'primary' }],
+  });
+}
+
 async function toggleLabels(checked) {
   saveSettings({ ...loadSettings(), offlineLabels: checked });
   await setupTiles();
@@ -875,6 +970,7 @@ async function start() {
     toast("Couldn't open saved places on this device. Private windows can block storage.", 8000);
   }
   updateEmpty();
+  await loadAssets();
   await loadLocalFiles();
   await setupTiles();
 }
