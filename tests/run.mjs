@@ -12,6 +12,7 @@ import { DEFAULT_RAMP as RAMP, isHexColor, rampColor } from '../js/ramp.js';
 import { distanceMeters, nearestPlace } from '../js/geo.js';
 import { validateTileUrl, noneSource, probeSource, BLANK_STYLE, styleFor, osmSource, customSource, localSource, localStyle, sourceLabel } from '../js/tiles.js';
 import { parseHeader, MapFileError } from '../js/pmtilesHeader.js';
+import { alphaToSdf, encodeGlyphRange, glyphRangeBytes } from '../js/glyphs.js';
 import { keyFor } from '../js/localMaps.js';
 import { loadSettings } from '../js/settings.js';
 import { normalizeTag, normalizeTags, placeTags, tagStats, topTags, matchesTags, filterPlaces, pruneFilter } from '../js/tags.js';
@@ -385,6 +386,88 @@ await test('settings: default tags are normalised, de-duplicated and limited', (
   globalThis.localStorage = { getItem: () => JSON.stringify({ defaultTags: 'usa' }) };
   assert.deepEqual(loadSettings().defaultTags, []);
   delete globalThis.localStorage;
+});
+
+await test('offline labels: off by default; on adds names, dots and a glyph address, region files only from their zoom', () => {
+  assert.equal(localStyle([world], null).glyphs, undefined);
+  const style = localStyle([world, tokyo], null, true);
+  assert.equal(style.glyphs, 'fontsdf://{fontstack}/{range}.pbf');
+  const labels = style.layers.filter((l) => l.type === 'symbol');
+  assert.ok(labels.some((l) => l.id === 'file0-country-label' && l.minzoom === undefined)); // world: every zoom
+  assert.ok(labels.some((l) => l.id === 'file1-roads-label' && l.minzoom === 12)); // region: own minzoom kept (> 7)
+  assert.ok(labels.some((l) => l.id === 'file1-country-label' && l.minzoom === 7)); // region: bumped to where it starts
+  assert.equal(new Set(style.layers.map((l) => l.id)).size, style.layers.length); // ids unique
+  assert.ok(style.layers.some((l) => l.id === 'file0-pois-dot' && l.type === 'circle'));
+  assert.equal(localStyle([{ ...world, kind: 'raster' }], null, true).glyphs, undefined); // raster files have no names
+  assert.equal(styleFor(localSource([world], null, true)).glyphs !== undefined, true);
+});
+
+/* ---------- glyphs (offline text) ---------- */
+
+/** Minimal protobuf reader for the glyph file: [{ name, range, glyphs: [{ id, bitmap, width, ... }] }] */
+function readGlyphFile(bytes) {
+  let pos = 0;
+  const varint = () => { let n = 0, shift = 0, b; do { b = bytes[pos++]; n += (b & 127) * 2 ** shift; shift += 7; } while (b & 128); return n; };
+  const unzig = (n) => (n >>> 1) ^ -(n & 1);
+  const message = (end, onField) => { while (pos < end) { const key = varint(); onField(key >> 3, key & 7); } };
+  const chunk = () => { const len = varint(); const start = pos; pos += len; return [start, pos]; };
+  const stacks = [];
+  message(bytes.length, (tag) => {
+    const [, stackEnd] = [0, (() => { const len = varint(); return pos + len; })()];
+    const stack = { glyphs: [] };
+    message(stackEnd, (t) => {
+      if (t === 1) { const [a, b] = chunk(); stack.name = new TextDecoder().decode(bytes.slice(a, b)); }
+      else if (t === 2) { const [a, b] = chunk(); stack.range = new TextDecoder().decode(bytes.slice(a, b)); }
+      else {
+        const glyphEnd = (() => { const len = varint(); return pos + len; })();
+        const g = {};
+        message(glyphEnd, (gt) => {
+          if (gt === 2) { const [a, b] = chunk(); g.bitmap = bytes.slice(a, b); }
+          else { const n = varint(); g[{ 1: 'id', 3: 'width', 4: 'height', 5: 'left', 6: 'top', 7: 'advance' }[gt]] = gt === 5 || gt === 6 ? unzig(n) : n; }
+        });
+        stack.glyphs.push(g);
+      }
+    });
+    stacks.push(stack);
+  });
+  return stacks;
+}
+
+await test('glyph file: encodes and reads back (negative offsets, empty glyphs, bitmaps)', () => {
+  const bitmap = new Uint8Array((5 + 6) * (4 + 6)).map((_, i) => i % 256);
+  const [stack] = readGlyphFile(encodeGlyphRange('Sans Regular', '0-255', [
+    { id: 65, bitmap, width: 5, height: 4, left: 0, top: -8, advance: 14 },
+    { id: 32, advance: 6 },
+    { id: 300, bitmap, width: 5, height: 4, left: -2, top: 11, advance: 300 },
+  ]));
+  assert.deepEqual([stack.name, stack.range, stack.glyphs.length], ['Sans Regular', '0-255', 3]);
+  const [a, space, c] = stack.glyphs;
+  assert.deepEqual([a.id, a.width, a.height, a.left, a.top, a.advance], [65, 5, 4, 0, -8, 14]);
+  assert.deepEqual([...a.bitmap], [...bitmap]);
+  assert.equal(space.bitmap, undefined); // a blank glyph has no bitmap, as MapLibre expects
+  assert.deepEqual([c.id, c.left, c.top, c.advance], [300, -2, 11, 300]);
+});
+await test('glyph range: skips control characters and surrogates, asks the drawer for the rest', () => {
+  const asked = [];
+  const bytes = glyphRangeBytes('Sans Bold', 0, 255, (char, stack) => { asked.push(char.codePointAt(0)); return { advance: stack === 'Sans Bold' ? 7 : 0 }; });
+  const [stack] = readGlyphFile(bytes);
+  assert.equal(stack.glyphs[0].id, 32);
+  assert.equal(stack.glyphs.some((g) => g.id === 0x7f || g.id < 32), false);
+  assert.equal(asked.length, stack.glyphs.length);
+  assert.equal(glyphRangeBytes('S', 0xd800, 0xd8ff, () => ({ advance: 1 })).length > 0, true);
+  assert.equal(readGlyphFile(glyphRangeBytes('S', 0xd800, 0xd8ff, () => ({ advance: 1 })))[0].glyphs.length, 0);
+});
+await test('distance field: solid inside, edge near the 0.75 mark, nothing far outside', () => {
+  const w = 21, h = 21;
+  const alpha = new Uint8ClampedArray(w * h);
+  for (let y = 6; y < 15; y++) for (let x = 6; x < 15; x++) alpha[y * w + x] = 255; // a 9x9 square
+  const sdf = alphaToSdf(alpha, w, h);
+  assert.equal(sdf[10 * w + 10], 255); // centre: deep inside
+  assert.ok(sdf[10 * w + 6] >= 180 && sdf[10 * w + 6] <= 230); // first pixel inside the edge
+  assert.ok(sdf[10 * w + 5] < 180 && sdf[10 * w + 5] > 100); // first pixel outside it
+  assert.equal(sdf[0], 0); // far corner
+  const half = alphaToSdf(new Uint8ClampedArray([0, 128, 255]), 3, 1);
+  assert.ok(half[0] < half[1] && half[1] < half[2]); // anti-aliased pixels land in between
 });
 
 /* ---------- tags ---------- */

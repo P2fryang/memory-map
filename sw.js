@@ -13,7 +13,7 @@
 // localStorage): nothing is fetched from the network for other hosts, ever, and app files are served from
 // the cache without the background refresh. A request for one of our own files that was never cached still
 // goes to our own host as a last resort; anything else just fails.
-const VERSION = 'v9';
+const VERSION = 'v10';
 const CACHE = `places-map-${VERSION}`;
 const TILE_CACHE = 'tiles-places-map';
 const OFFLINE_FLAG = 'offline-flag-places-map';
@@ -40,6 +40,7 @@ const SHELL = [
   './js/exportImport.js',
   './js/geo.js',
   './js/geolocation.js',
+  './js/glyphs.js',
   './js/importReview.js',
   './js/mapFiles.js',
   './js/localMaps.js',

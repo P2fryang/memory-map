@@ -249,7 +249,7 @@ const formatBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ?
 export function renderSettings({
   count, lastExport, onExport, onImportFile, onClose,
   tiles, onSaveTiles, onClearTileCache,
-  maps, onAddMapFile, onRemoveMapFile, onToggleLocalOnline,
+  maps, onAddMapFile, onRemoveMapFile, onToggleLocalOnline, onToggleLabels,
   offline, onToggleOffline,
   defaultTags, tagStats, onDefaultTagsChange,
 }) {
@@ -359,7 +359,12 @@ export function renderSettings({
           h('input', { type: 'checkbox', checked: maps.localOnline, onchange: (event) => onToggleLocalOnline(event.target.checked) }),
           h('span', {}, 'Use the online map for detail beyond these files'))
       : null,
-    h('p', { class: 'hint' }, 'Files are copied into this browser and never uploaded. Labels are not drawn on offline maps. Keep an eye on file sizes, especially on a phone.'),
+    maps.files.length
+      ? h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: maps.labels, onchange: (event) => onToggleLabels(event.target.checked) }),
+          h('span', {}, 'Show names on offline maps'))
+      : null,
+    h('p', { class: 'hint' }, "Files are copied into this browser and never uploaded. Names (places, roads, water, points of interest) are drawn with this device's own fonts, so nothing is downloaded; points of interest are plain dots. Keep an eye on file sizes, especially on a phone."),
 
     h('h3', {}, 'Privacy'),
     h('p', {}, 'Your places never leave this device. Your location is read only when you tap Pin location, and only saved if you save the place.'),

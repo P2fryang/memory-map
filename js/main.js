@@ -206,10 +206,11 @@ function renderPanel() {
         },
         onSaveTiles: saveTileSettings,
         onClearTileCache: clearTileCache,
-        maps: { supported: localMapsSupported(), files: state.mapMetas, localOnline: loadSettings().localOnline },
+        maps: { supported: localMapsSupported(), files: state.mapMetas, localOnline: loadSettings().localOnline, labels: loadSettings().offlineLabels },
         onAddMapFile: addMapFile,
         onRemoveMapFile: removeMapFile,
         onToggleLocalOnline: toggleLocalOnline,
+        onToggleLabels: toggleLabels,
         defaultTags: loadSettings().defaultTags,
         tagStats: tagStats(store.places),
         onDefaultTagsChange: (tags) => { if (!saveSettings({ ...loadSettings(), defaultTags: tags })) toast("Couldn't save settings on this device."); },
@@ -649,7 +650,7 @@ function useSource(source) {
 /** Offline mode: only the offline map files (or a blank background), and no network requests for the map. */
 function showOffline() {
   state.online = null;
-  useSource(state.localFiles.length ? localSource(state.localFiles, null) : noneSource());
+  useSource(state.localFiles.length ? localSource(state.localFiles, null, loadSettings().offlineLabels) : noneSource());
 }
 
 /** Shows an online map (OpenStreetMap or your server), underneath the offline files if there are any. */
@@ -658,7 +659,7 @@ function showOnline(online) {
   state.online = online;
   const settings = loadSettings();
   useSource(state.localFiles.length
-    ? localSource(state.localFiles, settings.localOnline ? online : null)
+    ? localSource(state.localFiles, settings.localOnline ? online : null, settings.offlineLabels)
     : online);
 }
 
@@ -825,6 +826,11 @@ async function toggleOffline(checked) {
   await setupTiles();
   toast(checked ? 'Offline mode on. Nothing is loaded from the internet.' : 'Offline mode off.');
   if (state.view === 'settings') renderPanel();
+}
+
+async function toggleLabels(checked) {
+  saveSettings({ ...loadSettings(), offlineLabels: checked });
+  await setupTiles();
 }
 
 async function toggleLocalOnline(checked) {

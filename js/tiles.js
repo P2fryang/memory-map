@@ -1,13 +1,14 @@
 // Where the map's picture tiles come from: your own server, or OpenStreetMap.
 // The rest of the app only deals in "sources": { kind: 'osm' } or { kind: 'custom', url, attribution }.
 import { OSM_ATTRIBUTION, OSM_TILE_URL } from './config.js';
+import { GLYPH_URL } from './glyphs.js';
 
 export const osmSource = () => ({ kind: 'osm' });
 export const customSource = (url, attribution) => ({ kind: 'custom', url: url.trim(), attribution: attribution ?? '' });
 /** Offline map files drawn first; `online` (an osm/custom source, or null) fills in beyond them. */
 /** Offline mode with no map files: nothing to draw but the background. */
 export const noneSource = () => ({ kind: 'none' });
-export const localSource = (files, online) => ({ kind: 'local', files, online: online ?? null });
+export const localSource = (files, online, labels = false) => ({ kind: 'local', files, online: online ?? null, labels });
 
 export function sourceLabel(source) {
   if (source.kind === 'osm') return 'OpenStreetMap';
@@ -55,13 +56,45 @@ function onlineRaster(source) {
   return null;
 }
 
-// Plain colours, no text labels: labels need font files, which would have to come from a server.
+// Plain colours. Text is optional (labels: true) and uses glyphs made on the device (glyphs.js), so it needs no server.
 const LAND = '#e9e6dc';
 const WATER = '#bcd7e6';
 const ROAD = '#cfc9ba';
 const BORDER = '#8e9aa3';
 
-function vectorLayers(prefix, source, minzoom) {
+// Layer and property names follow the Protomaps basemap schema. Text uses the font names "Sans Regular/Bold/Italic";
+// glyphs.js ignores the name apart from bold/italic. Symbols are plain dots, since icons would need a sprite sheet.
+const kind = ['to-string', ['coalesce', ['get', 'pmap:kind'], ['get', 'kind'], '']];
+const oneOf = (...values) => ['in', kind, ['literal', values]];
+const zoomSize = (...stops) => ['interpolate', ['linear'], ['zoom'], ...stops];
+
+function labelLayers(prefix, source) {
+  const text = (id, sourceLayer, filter, layout, paint = {}, extra = {}) => ({
+    id: `${prefix}${id}`, type: 'symbol', source, 'source-layer': sourceLayer, filter,
+    layout: { 'text-field': ['get', 'name'], 'text-font': ['Sans Regular'], ...layout },
+    paint: { 'text-color': '#33444b', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5, ...paint },
+    ...extra,
+  });
+  return [
+    text('water-label', 'water', ['has', 'name'], { 'text-size': 12, 'text-font': ['Sans Italic'] }, { 'text-color': '#3f7396' }, { minzoom: 3 }),
+    text('roads-label', 'roads', ['all', ['has', 'name'], oneOf('highway', 'major_road', 'medium_road', 'minor_road')],
+      { 'symbol-placement': 'line', 'text-size': zoomSize(12, 10, 18, 14) }, {}, { minzoom: 12 }),
+    { id: `${prefix}pois-dot`, type: 'circle', source, 'source-layer': 'pois', minzoom: 14,
+      paint: { 'circle-radius': 3, 'circle-color': '#8a6d3b', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1 } },
+    text('pois-label', 'pois', ['has', 'name'],
+      { 'text-size': 11, 'text-anchor': 'left', 'text-offset': [0.7, 0] }, { 'text-color': '#6b5a3a' }, { minzoom: 15 }),
+    text('neighbourhood-label', 'places', oneOf('neighbourhood', 'macrohood'),
+      { 'text-size': 11, 'text-transform': 'uppercase', 'text-letter-spacing': 0.08 }, { 'text-color': '#5a6b72' }, { minzoom: 12 }),
+    text('locality-label', 'places', ['==', kind, 'locality'],
+      { 'text-size': zoomSize(5, 12, 12, 16), 'symbol-sort-key': ['*', -1, ['to-number', ['coalesce', ['get', 'population'], 0], 0]] }, {}, { minzoom: 4 }),
+    text('region-label', 'places', ['==', kind, 'region'],
+      { 'text-size': 12, 'text-transform': 'uppercase', 'text-letter-spacing': 0.1 }, { 'text-color': '#6a7a82' }, { minzoom: 4, maxzoom: 9 }),
+    text('country-label', 'places', ['==', kind, 'country'],
+      { 'text-size': zoomSize(1, 11, 6, 18), 'text-font': ['Sans Bold'] }, { 'text-color': '#44545c' }),
+  ];
+}
+
+function vectorLayers(prefix, source, minzoom, labels) {
   const layers = [
     { id: `${prefix}earth`, type: 'fill', source, 'source-layer': 'earth', paint: { 'fill-color': LAND } },
     { id: `${prefix}water`, type: 'fill', source, 'source-layer': 'water', paint: { 'fill-color': WATER } },
@@ -69,8 +102,9 @@ function vectorLayers(prefix, source, minzoom) {
       paint: { 'line-color': BORDER, 'line-opacity': 0.8, 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.4, 10, 1.2] } },
     { id: `${prefix}roads`, type: 'line', source, 'source-layer': 'roads',
       paint: { 'line-color': ROAD, 'line-width': ['interpolate', ['exponential', 1.5], ['zoom'], 6, 0.3, 18, 10] } },
+    ...(labels ? labelLayers(prefix, source) : []),
   ];
-  return minzoom === undefined ? layers : layers.map((l) => ({ ...l, minzoom }));
+  return minzoom === undefined ? layers : layers.map((l) => ({ ...l, minzoom: Math.max(l.minzoom ?? 0, minzoom) }));
 }
 
 /**
@@ -80,8 +114,9 @@ function vectorLayers(prefix, source, minzoom) {
  *   2. the lowest-detail files (e.g. a worldwide z0-6 file), visible at every zoom (over-zoomed past their max)
  *   3. the online map, only from the zoom just past those files; if it can't load, the files below show through
  *   4. higher-detail files (regional extracts), from that same zoom, covering their own area
+ * With labels, vector files also get place, road, water and point-of-interest names (and dots for the latter).
  */
-export function localStyle(files, online) {
+export function localStyle(files, online, labels = false) {
   const sorted = [...files].sort((a, b) => a.maxZoom - b.maxZoom || a.name.localeCompare(b.name));
   const lowMax = sorted[0].maxZoom;
   const raster = onlineRaster(online);
@@ -93,7 +128,7 @@ export function localStyle(files, online) {
     sources[id] = { type: file.kind === 'vector' ? 'vector' : 'raster', url: `pmtiles://${file.key}`, attribution: OSM_ATTRIBUTION };
     if (file.kind === 'raster') sources[id].tileSize = 256;
     layers.push(...(file.kind === 'vector'
-      ? vectorLayers(`${id}-`, id, minzoom)
+      ? vectorLayers(`${id}-`, id, minzoom, labels)
       : [{ id: `${id}-raster`, type: 'raster', source: id, ...(minzoom === undefined ? {} : { minzoom }) }]));
   };
 
@@ -103,14 +138,14 @@ export function localStyle(files, online) {
     layers.push({ id: 'online', type: 'raster', source: 'online', minzoom: lowMax + 1 });
   }
   sorted.forEach((file, i) => { if (file.maxZoom !== lowMax) addFile(file, i, lowMax + 1); });
-  return { version: 8, sources, layers };
+  return { version: 8, sources, layers, ...(labels && files.some((f) => f.kind === 'vector') ? { glyphs: GLYPH_URL } : {}) };
 }
 
 /** A MapLibre `style` value (object or URL string) for a source. */
 export function styleFor(source) {
   if (source.kind === 'osm') return rasterStyle(OSM_TILE_URL, OSM_ATTRIBUTION);
   if (source.kind === 'none') return BLANK_STYLE;
-  if (source.kind === 'local') return localStyle(source.files, source.online);
+  if (source.kind === 'local') return localStyle(source.files, source.online, source.labels);
   if (isStyleUrl(source.url)) return source.url;
   return rasterStyle(source.url, source.attribution);
 }

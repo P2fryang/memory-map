@@ -107,10 +107,18 @@ How the layers stack (bottom to top), so a small worldwide file plus a few regio
 
 Untick “Use the online map for detail beyond these files” to stay fully offline. With no files added, nothing changes.
 
-Limits: vector files must use the **Protomaps basemap schema** (layers `earth`, `water`, `boundaries`, `roads`) and are drawn in
-plain colours **without text labels** (labels would need font files from a server). Raster PMTiles files are supported (assumed
-256 px tiles). Attribution shown is “© OpenStreetMap contributors”; change `OSM_ATTRIBUTION` use in `js/tiles.js` if your
-files come from other data.
+Limits: vector files must use the **Protomaps basemap schema** (layers `earth`, `water`, `boundaries`, `roads`, and for names
+`places`, `pois`). Raster PMTiles files are supported (assumed 256 px tiles). Attribution shown is “© OpenStreetMap contributors”;
+change `OSM_ATTRIBUTION` use in `js/tiles.js` if your files come from other data.
+
+**Names on offline maps** (Settings → *Show names on offline maps*, on by default): place names (countries, regions, cities,
+neighbourhoods), road names, water names and points of interest are drawn on vector files. MapLibre normally downloads font
+files for text; offline there is no server, so `js/glyphs.js` makes them on the fly from the fonts already on the device (each
+character is drawn on a canvas and converted to the distance-field format MapLibre wants; `js/localMaps.js` answers MapLibre's
+requests for it). Nothing is downloaded, and it works with offline mode on. The look follows the device's system font, characters
+the device has no font for show as boxes, and the first view of each new range of characters takes a moment. Points of interest
+are plain dots (icons would need a sprite sheet). Raster files have names baked into their pictures, so this setting does not
+affect them. If your extract uses different property names for kinds or names, adjust `labelLayers` in `js/tiles.js`.
 
 Making files (on your computer, with the PMTiles command-line tool; check its docs for current flags and where Protomaps
 publishes planet builds). The usual shape is one extract for the whole world at low zoom, plus one per region you pin often:
@@ -160,6 +168,7 @@ the service worker has cached them, which takes opening the app online and reloa
       tags.js          tag rules, usage ranking, filtering   tagPicker.js  the tag entry/filter control
       mapView.js       MapLibre adapter (only file that touches the map library)
       tiles.js         tile sources, style building (online + offline layering), reachability probe
+      glyphs.js        offline text: glyph files made from device fonts
       mapFiles.js      stores .pmtiles files on the device     pmtilesHeader.js  reads/validates a file's header
       localMaps.js     connects stored files to MapLibre via the pmtiles library
       offlineMode.js   shares the offline-mode setting with the service worker
